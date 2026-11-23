@@ -65,6 +65,8 @@ func _ready() -> void:
 	if _soldier:
 		_soldier.walk_speed_ref = walk_speed
 		_soldier.run_speed_ref = run_speed
+		_soldier.footstep.connect(func(run: float) -> void:
+			Sfx.play("step", global_position, lerpf(-10.0, -4.0, run), 0.15))
 	health_changed.emit.call_deferred(health, max_health)
 
 
@@ -82,9 +84,11 @@ func take_damage(amount: float, from: Vector3) -> void:
 		amount *= block_factor
 		# Étincelles sur le bouclier.
 		HIT_FX.burst(self, global_position + Vector3.UP * 1.1 + _forward() * 0.35, Color(1.0, 0.6, 0.2), 16, 3.5, 0.035, 0.35)
+		Sfx.play("block", global_position + Vector3.UP)
 		_shake(0.25)
 	else:
 		_knockback = -to_attacker.normalized() * 3.0
+		Sfx.play("hurt", global_position + Vector3.UP)
 		_shake(0.55)
 		_hit_stop(0.07)
 	health = maxf(health - amount, 0.0)
@@ -157,15 +161,19 @@ func _physics_process(delta: float) -> void:
 
 
 func _update_combat(delta: float) -> void:
-	_blocking = Input.is_action_pressed("block") and _attack_timer < 0.0
+	# Souris sur un élément d'interface (réglage du volume) : ses clics ne
+	# sont pas des coups d'épée.
+	var on_ui := get_viewport().gui_get_hovered_control() != null
+	_blocking = Input.is_action_pressed("block") and _attack_timer < 0.0 and not on_ui
 	if _soldier:
 		_soldier.set_blocking(_blocking)
 
-	if _attack_timer < 0.0 and not _blocking and Input.is_action_just_pressed("attack"):
+	if _attack_timer < 0.0 and not _blocking and not on_ui and Input.is_action_just_pressed("attack"):
 		_attack_timer = 0.0
 		_attack_hit_done = false
 		if _soldier:
 			_soldier.play_attack()
+		Sfx.play("swing", global_position + Vector3.UP, -3.0, 0.12)
 	if _attack_timer >= 0.0:
 		_attack_timer += delta
 		var duration := SOLDIER.ATTACK_DURATION
@@ -190,6 +198,7 @@ func _strike() -> void:
 		if to.length() <= attack_reach and forward.dot(to.normalized()) >= attack_arc:
 			e.take_damage(attack_damage, global_position)
 			HIT_FX.burst(self, e.global_position + Vector3.UP * 1.1 - to.normalized() * 0.2, Color(0.9, 0.88, 0.8), 14)
+			Sfx.play("hit_bone", e.global_position + Vector3.UP)
 			hit = true
 	if hit:
 		_shake(0.3)

@@ -64,6 +64,7 @@ var _sees_player := false
 var _los_timer := 0.0
 var _last_seen := Vector3.ZERO
 var _lost_time := 0.0
+var _rattle_timer := 0.0
 var _gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity")
 var _collision: CollisionShape3D
 # Âme qui s'échappe à la défaite : particules bleues qui montent.
@@ -141,6 +142,9 @@ func take_damage(amount: float, from: Vector3) -> void:
 		# mais la collision avec le sol reste : sinon la gravité l'entraînerait
 		# sous la terre.
 		set_deferred("collision_layer", 0)
+		Sfx.play("collapse", global_position + Vector3.UP * 0.5)
+		get_tree().create_timer(0.35).timeout.connect(func() -> void:
+			Sfx.play("soul", global_position + Vector3.UP, -2.0, 0.05))
 		died.emit()
 	else:
 		_set_state(State.STAGGER)
@@ -185,6 +189,7 @@ func _physics_process(delta: float) -> void:
 		State.WANDER:
 			if dist < sight_range and _sees_player:
 				_set_state(State.CHASE)
+				Sfx.play("rattle", global_position + Vector3.UP * 1.4)
 			elif _wander_wait > 0.0:
 				_wander_wait -= delta
 			else:
@@ -203,8 +208,14 @@ func _physics_process(delta: float) -> void:
 				_wander_target = home
 			elif dist < attack_range and _sees_player:
 				_set_state(State.ATTACK)
+				Sfx.play("rattle", global_position + Vector3.UP * 1.4, 2.0)
 			elif _sees_player:
 				desired = to_player.normalized() * chase_speed
+				# Claquements d'os de temps en temps pendant la poursuite.
+				_rattle_timer -= delta
+				if _rattle_timer <= 0.0:
+					_rattle_timer = _rng.randf_range(1.8, 3.5)
+					Sfx.play("rattle", global_position + Vector3.UP * 1.4, -4.0)
 			else:
 				# Va voir là où il l'a aperçu pour la dernière fois.
 				var to_last := _last_seen - global_position

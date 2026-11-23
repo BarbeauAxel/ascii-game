@@ -34,6 +34,8 @@ cimetière. Tout le décor est construit en code, sans asset importé.
 | F7                         | Correspondance de forme on/off (sinon rampe de densité seule) |
 | F11                        | Plein écran                             |
 | `+` / `-` (ou pavé num.)   | Taille de cellule : 4, 5, 6, 7, 8, 10 px |
+| R                          | Recommencer la partie                   |
+| Curseur en bas à gauche    | Volume général (0 % par défaut, mémorisé) |
 | Échap                      | Quitter                                 |
 
 Les déplacements utilisent les touches *physiques* : ZQSD sur AZERTY et WASD sur
@@ -104,6 +106,7 @@ scripts/world/rain.gd  pluie (F3) : gouttes, éclaboussures, brouillard
 scripts/enemies/skeleton.gd  squelette : construction, animation, comportement
 scripts/enemies/enemy_spawner.gd  placement des squelettes
 scripts/fx/hit_fx.gd   éclats, étincelles, poussière (particules ponctuelles)
+scripts/audio/sfx.gd   sons synthétisés en code (autoload « Sfx »)
 scripts/camera_follow.gd   caméra isométrique orthographique, calage, zoom
 scripts/ascii_post_process.gd  pilote du quad : police, atlas, analyse, réglages
 scripts/glyph_atlas.gd rendu et analyse de l'atlas de glyphes
@@ -172,7 +175,42 @@ progression. Un squelette vaincu s'effondre en tas d'os pour de bon : ses yeux
 s'éteignent et son âme s'échappe en particules bleues qui s'élèvent pendant
 quelques secondes. Quand les 5 sont vaincus, les cierges de l'autel
 s'embrasent, une colonne de lumière dorée s'élève et le message « La chapelle
-est purifiée » apparaît.
+est purifiée » apparaît, avec un accord de victoire. **R** relance la partie
+(à tout moment).
+
+## Son (`scripts/audio/sfx.gd`)
+
+Aucun fichier audio : tous les sons sont synthétisés en code au lancement
+(environ 0,3 s), échantillon par échantillon, à partir de bruit filtré, de
+sinusoïdes et d'enveloppes. Ils sont stockés en AudioStreamWAV 16 bits mono à
+22 050 Hz. Le module est un autoload, `Sfx.play("nom", position)`.
+
+| Son | Quand | Recette |
+|-----|-------|---------|
+| `swing` | coup d'épée | bruit dont la bande descend (« whoosh ») |
+| `hit_bone` | épée qui touche | claquement filtré + choc à 170 Hz + cliquetis |
+| `block` | parade réussie | 4 partiels métalliques inharmoniques qui résonnent |
+| `hurt` | coup encaissé | choc grave qui retombe + souffle |
+| `step` | chaque pas du soldat | froissement étouffé, plus fort en courant |
+| `rattle` | squelette qui repère, poursuit, arme son coup | salve de clics secs |
+| `collapse` | squelette vaincu | cascade de clics + deux chocs sourds |
+| `soul` | âme qui s'échappe | voix aérienne qui monte, légèrement vibrée |
+| `victory` | 5 squelettes vaincus | cloche puis accord majeur |
+| ambiance | en boucle | vent par rafales + grillons |
+| pluie | en boucle, suit F3 | bruissement + impacts de gouttes |
+
+Les sons ponctuels sont positionnés en 3D. L'« oreille » (AudioListener3D)
+est placée sur le joueur et orientée comme la caméra : un squelette à droite
+de l'écran s'entend à droite. Les pas suivent le cycle de marche
+(`footstep` dans `soldier.gd` : un pied touche le sol à chaque demi-cycle). En
+mode `--headless`, rien n'est synthétisé.
+
+**Volume** : un curseur en bas à gauche règle le bus principal, à 0 % par
+défaut. La courbe est au carré, car l'oreille est logarithmique : 50 % donne
+environ −12 dB et 0 coupe le son. La valeur est mémorisée dans
+`user://settings.cfg`. Un clic sur le curseur ne déclenche pas de coup
+d'épée, et il ne prend jamais le focus clavier, donc les flèches ne le
+modifient pas.
 
 ## Combat et squelettes
 

@@ -12,6 +12,11 @@ config/description="Prototype : scène 3D rendue en glyphes ASCII colorés via u
 run/main_scene="res://scenes/main.tscn"
 config/features=PackedStringArray("4.3", "Forward Plus")
 
+[autoload]
+
+; Sons synthétisés en code au lancement (scripts/audio/sfx.gd).
+Sfx="*res://scripts/audio/sfx.gd"
+
 [display]
 
 window/size/viewport_width=1280

@@ -6,7 +6,8 @@ extends Node3D
 ## F7 : correspondance de forme on/off (sinon rampe de densité seule)
 ## F11 : plein écran                 +/- : taille de cellule
 ## Molette : zoom (géré par camera_follow.gd)       Échap : quitter
-## F5 : personnage en cellules fines on/off
+## F5 : personnages en cellules fines on/off
+## R : recommencer la partie
 ##
 ## Le nom du personnage est un Label du HUD (police pixel nette, au-dessus de
 ## l'ASCII), replacé chaque frame au-dessus de sa tête.
@@ -21,6 +22,11 @@ extends Node3D
 @onready var health_fill: ColorRect = $HUD/HealthBack/HealthFill
 @onready var objective: Label = $HUD/Objective
 @onready var message: Label = $HUD/Message
+@onready var volume_slider: HSlider = $HUD/Volume/Slider
+@onready var volume_label: Label = $HUD/Volume/Label
+
+## Fichier où le volume choisi est mémorisé d'une partie à l'autre.
+const SETTINGS_PATH := "user://settings.cfg"
 
 # Objectif : vaincre tous les squelettes.
 var _skeleton_total := 0
@@ -35,6 +41,12 @@ var _fps_timer := 0.0
 func _ready() -> void:
 	post.settings_changed.connect(_update_hud)
 	player.health_changed.connect(_on_health_changed)
+	# Volume général : coupé par défaut, ou la dernière valeur choisie.
+	var config := ConfigFile.new()
+	config.load(SETTINGS_PATH)
+	volume_slider.value = config.get_value("audio", "volume", 0.0)
+	volume_slider.value_changed.connect(_on_volume_changed)
+	_apply_volume(volume_slider.value)
 	# Les squelettes sont créés par Enemies (enfant prêt avant ce nœud).
 	for enemy in get_tree().get_nodes_in_group("enemies"):
 		if enemy.has_signal("died"):
@@ -136,8 +148,27 @@ func _victory() -> void:
 	glow.omni_range = 12.0
 	glow.position = Vector3(0.0, 2.5, -14.0)
 	add_child(glow)
+	message.text = "La chapelle est purifiée\n\nR : recommencer"
 	var tween := create_tween()
 	tween.tween_property(message, "modulate:a", 1.0, 1.5)
+	Sfx.play_global("victory", -4.0)
+
+
+func _on_volume_changed(value: float) -> void:
+	_apply_volume(value)
+	var config := ConfigFile.new()
+	config.load(SETTINGS_PATH)
+	config.set_value("audio", "volume", value)
+	config.save(SETTINGS_PATH)
+
+
+## Courbe au carré : l'oreille perçoit le volume de façon logarithmique, la
+## moitié du curseur donne donc un son nettement plus faible (environ -12 dB).
+func _apply_volume(value: float) -> void:
+	var master := AudioServer.get_bus_index("Master")
+	AudioServer.set_bus_mute(master, value <= 0.0)
+	AudioServer.set_bus_volume_db(master, linear_to_db(maxf(value * value, 0.0001)))
+	volume_label.text = "Volume %d%%" % roundi(value * 100.0)
 
 
 func _on_health_changed(health: float, max_health: float) -> void:
@@ -178,6 +209,10 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif key.keycode == KEY_F11:
 		var fullscreen := DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_FULLSCREEN
 		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED if fullscreen else DisplayServer.WINDOW_MODE_FULLSCREEN)
+	elif key.keycode == KEY_R:
+		# Nouvelle partie (le temps de jeu peut être ralenti par une micro-pause).
+		Engine.time_scale = 1.0
+		get_tree().reload_current_scene()
 	elif key.keycode == KEY_ESCAPE:
 		get_tree().quit()
 	elif typed == "+" or key.keycode in [KEY_PLUS, KEY_KP_ADD, KEY_EQUAL]:
@@ -191,7 +226,7 @@ func _unhandled_input(event: InputEvent) -> void:
 
 func _update_hud() -> void:
 	var on_off := func(value: bool) -> String: return "ON" if value else "OFF"
-	hud.text = "F1 ASCII : %s   F2 contours/traits : %s   F3 pluie : %s   F5 joueur fin : %s   F7 forme : %s   F4 FPS   F6 HUD   F11 plein écran\n+/- cellule : %d px   Molette zoom   Maj courir   Clic G / J attaquer   Clic D / K parer   Échap quitter   Police : %s   Rampe : %s" % [
+	hud.text = "F1 ASCII : %s   F2 contours/traits : %s   F3 pluie : %s   F5 joueur fin : %s   F7 forme : %s   F4 FPS   F6 HUD   F11 plein écran\n+/- cellule : %d px   Molette zoom   Maj courir   Clic G / J attaquer   Clic D / K parer   R recommencer   Échap quitter   Police : %s   Rampe : %s" % [
 		on_off.call(post.ascii_enabled),
 		on_off.call(post.edges_enabled),
 		on_off.call(rain.active),

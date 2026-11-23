@@ -19,6 +19,9 @@ extends Node3D
 ## Repère : le soldat regarde vers -Z, pieds en y = 0.
 ## Rotation positive autour de X = le membre part vers l'avant.
 
+## Un pied touche le sol (pour les sons de pas). `run` : 0 marche, 1 course.
+signal footstep(run: float)
+
 ## Vitesse (m/s) à laquelle l'allure « marche » est complète.
 @export var walk_speed_ref := 3.2
 ## Vitesse (m/s) à laquelle l'allure « course » est complète.
@@ -146,7 +149,11 @@ func _process(delta: float) -> void:
 
 	# La phase avance de 2π par cycle : distance parcourue / longueur du cycle.
 	var stride := lerpf(stride_walk, stride_run, _run)
+	var previous_phase := _phase
 	_phase = fmod(_phase + speed / stride * TAU * delta, TAU)
+	# Un pied touche le sol deux fois par cycle (phase 0 et π) : son de pas.
+	if speed > 0.3 and on_floor and floori(previous_phase / PI) != floori(_phase / PI):
+		footstep.emit(_run)
 	# À l'arrêt, on ramène doucement les jambes en position neutre.
 	if speed < 0.05:
 		_phase = lerp_angle(_phase, 0.0 if cos(_phase) > 0.0 else PI, k * 0.5)

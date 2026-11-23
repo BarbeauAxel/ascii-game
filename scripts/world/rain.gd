@@ -56,6 +56,7 @@ func _ready() -> void:
 	if "--rain" in OS.get_cmdline_user_args():
 		set_active(true)
 		_amount = 1.0
+		Sfx.set_rain.call_deferred(1.0)
 
 
 func toggle() -> void:
@@ -76,6 +77,7 @@ func _process(delta: float) -> void:
 	if is_equal_approx(_amount, wanted) and _amount == 0.0:
 		return
 	_amount = move_toward(_amount, wanted, delta / fade_time)
+	Sfx.set_rain(_amount)
 	# Ronds de gouttes sur l'eau.
 	for node in get_tree().get_nodes_in_group("rain_receivers"):
 		var mesh := node as GeometryInstance3D
