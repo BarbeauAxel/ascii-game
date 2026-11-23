@@ -6,12 +6,20 @@ extends Node3D
 ## F7 : correspondance de forme on/off (sinon rampe de densité seule)
 ## F11 : plein écran                 +/- : taille de cellule
 ## Molette : zoom (géré par camera_follow.gd)       Échap : quitter
-## (F5 : joueur en cellules fines arrive à l'étape 3.)
+## F5 : personnage en cellules fines on/off
+##
+## Le nom du personnage est un Label du HUD (police pixel nette, au-dessus de
+## l'ASCII), replacé chaque frame au-dessus de sa tête.
 
 @onready var post: AsciiPostProcess = $Camera3D/AsciiPostProcess
 @onready var hud: Label = $HUD/Label
 @onready var fps_label: Label = $HUD/FpsLabel
 @onready var rain: Node = $Rain  # rain.gd
+@onready var player: Node3D = $Player
+@onready var player_name: Label = $HUD/PlayerName
+
+## Hauteur du nom au-dessus des pieds du personnage (mètres).
+const NAME_HEIGHT := 2.25
 
 var _fps_timer := 0.0
 
@@ -28,6 +36,8 @@ func _ready() -> void:
 		post.toggle_shape_matching()
 	if "--fps" in args:
 		fps_label.visible = true
+	if "--no-fine" in args:
+		post.toggle_fine()
 	if "--no-snap" in args:
 		$Camera3D.snap_to_cells = false
 	for arg in args:
@@ -44,6 +54,7 @@ func _ready() -> void:
 
 
 func _process(delta: float) -> void:
+	_place_name()
 	# Mise à jour du compteur 4 fois par seconde (lisible, et sans coût notable).
 	if not fps_label.visible:
 		return
@@ -54,6 +65,17 @@ func _process(delta: float) -> void:
 	var fps := Engine.get_frames_per_second()
 	var size := get_viewport().get_visible_rect().size
 	fps_label.text = "%d FPS  (%.1f ms)\n%dx%d" % [fps, 1000.0 / maxf(fps, 1.0), size.x, size.y]
+
+
+## Place le nom au-dessus de la tête, aligné sur des pixels entiers.
+func _place_name() -> void:
+	var cam := get_viewport().get_camera_3d()
+	if cam == null:
+		return
+	var head := player.global_position + Vector3.UP * NAME_HEIGHT
+	player_name.visible = not cam.is_position_behind(head)
+	var screen := cam.unproject_position(head)
+	player_name.position = (screen - player_name.size * 0.5).round()
 
 
 func _hold_action(action: StringName) -> void:
@@ -78,6 +100,8 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif key.keycode == KEY_F3:
 		rain.toggle()
 		_update_hud()
+	elif key.keycode == KEY_F5:
+		post.toggle_fine()
 	elif key.keycode == KEY_F4:
 		fps_label.visible = not fps_label.visible
 		_fps_timer = 0.0
@@ -101,10 +125,11 @@ func _unhandled_input(event: InputEvent) -> void:
 
 func _update_hud() -> void:
 	var on_off := func(value: bool) -> String: return "ON" if value else "OFF"
-	hud.text = "F1 ASCII : %s   F2 contours/traits : %s   F3 pluie : %s   F7 forme : %s   F4 FPS   F6 HUD   F11 plein écran\n+/- cellule : %d px   Molette zoom   Maj courir   Échap quitter   Police : %s   Rampe : %s" % [
+	hud.text = "F1 ASCII : %s   F2 contours/traits : %s   F3 pluie : %s   F5 joueur fin : %s   F7 forme : %s   F4 FPS   F6 HUD   F11 plein écran\n+/- cellule : %d px   Molette zoom   Maj courir   Échap quitter   Police : %s   Rampe : %s" % [
 		on_off.call(post.ascii_enabled),
 		on_off.call(post.edges_enabled),
 		on_off.call(rain.active),
+		on_off.call(post.fine_enabled),
 		on_off.call(post.shape_matching_enabled),
 		post.cell_size,
 		post.get_font_name(),

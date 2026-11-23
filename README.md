@@ -26,14 +26,13 @@ cimetière. Tout le décor est construit en code, sans asset importé.
 | F1                         | Effet ASCII on/off (comparer au rendu brut) |
 | F2                         | Contours et traits orientés on/off      |
 | F3                         | Pluie on/off                            |
+| F5                         | Personnage en cellules fines on/off     |
 | F4                         | Compteur de FPS                         |
 | F6                         | Afficher/masquer le HUD                 |
 | F7                         | Correspondance de forme on/off (sinon rampe de densité seule) |
 | F11                        | Plein écran                             |
 | `+` / `-` (ou pavé num.)   | Taille de cellule : 4, 5, 6, 7, 8, 10 px |
 | Échap                      | Quitter                                 |
-
-F5 (personnage en cellules fines) arrivera à l'étape 3.
 
 Les déplacements utilisent les touches *physiques* : ZQSD sur AZERTY et WASD sur
 QWERTY correspondent aux mêmes touches.
@@ -56,6 +55,7 @@ avec `--write-movie` pour capturer des comparaisons.
 | `--print-glyphs`       | affiche dans la console la densité / dispersion / asymétrie mesurées de chaque glyphe |
 | `--hold=<action>`      | maintient une action (ex : `--hold=move_forward`), pour tester les déplacements sans clavier |
 | `--rain`               | démarre sous la pluie |
+| `--no-fine`           | démarre sans les cellules fines du personnage |
 
 Mesurer les performances : `godot --path . --resolution 1920x1080 --disable-vsync --print-fps`.
 
@@ -137,6 +137,20 @@ est aussi exécuté dans l'éditeur, on le voit donc dans la scène).
   (`rim`) pour se détacher du fond.
 - **Métal à moitié** (`metallic` ≈ 0,45) pour la même raison.
 - Couleurs et intensités réglables dans l'inspecteur (`Player/Visual/Soldier`).
+- **Cellules fines (F5)** : le soldat est dessiné en cellules de 3 px, le
+  décor en 5 px, d'où beaucoup plus de détail sur lui. Une caméra jumelle,
+  dans un SubViewport qui suit exactement la caméra principale, ne voit que le
+  calque du personnage (calque 2) : son alpha sert de masque au shader ASCII.
+  Un pixel du masque n'est retenu que si la profondeur de la scène y tombe
+  dans l'intervalle de profondeur du soldat, si bien qu'un mur devant lui
+  reste en cellules normales. Les cellules fines ont leur propre atlas, rendu
+  à leur taille ; descripteurs de forme et rampe sont partagés. Coût : environ
+  0,2 ms en 1080p. Réglages : `fine_cell_size` et `fine_target_path` sur
+  `Camera3D/AsciiPostProcess`.
+- **Nom flottant** : un `Label` du HUD en police pixel, placé chaque image
+  au-dessus de la tête (`main.gd`, `NAME_HEIGHT`). Il reste net, au-dessus de
+  l'ASCII, au lieu d'être converti en glyphes illisibles. Le texte se change
+  dans `HUD/PlayerName`.
 
 ## Le décor (`scripts/world/`)
 

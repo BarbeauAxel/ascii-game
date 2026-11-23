@@ -41,7 +41,16 @@ const CELL_SIZES: Array[int] = [4, 5, 6, 7, 8, 10]
 ## des pixels nets. 0 = traiter la police comme une police vectorielle classique.
 @export var font_pixel_size: int = 8
 
+@export_group("Joueur en cellules fines (F5)")
+## Personnage dessiné en cellules plus petites que le décor (plus de détail).
+@export var fine_target_path: NodePath
+## Taille des cellules fines (pixels). Ignorée si >= cell_size.
+@export var fine_cell_size: int = 3
+## Calques de rendu du personnage (voir soldier.gd, CHARACTER_LAYER).
+@export_flags_3d_render var character_layers: int = 2
+
 var ascii_enabled := true
+var fine_enabled := true
 var edges_enabled := true
 var shape_matching_enabled := true
 ## Rampe générée (pour affichage / debug), du plus clair au plus dense.
@@ -56,6 +65,11 @@ var _font: Font
 var _font_smooth: Font
 var _is_pixel_font := false
 var _build_id := 0
+# Passe « joueur fin » : caméra jumelle qui ne voit que le personnage.
+var _fine_target: Node3D
+var _mask_viewport: SubViewport
+var _mask_camera: Camera3D
+var _fine_ready := false
 
 
 func _ready() -> void:
@@ -81,8 +95,43 @@ func _ready() -> void:
 	_material.set_shader_parameter("dir_glyphs", Vector4i(
 		glyph_set.find("|"), glyph_set.find("/"), glyph_set.find("-"), glyph_set.find("\\")))
 
+	_fine_target = get_node_or_null(fine_target_path) as Node3D
+	if _fine_target:
+		_setup_fine_pass()
+
 	await _rebuild_atlas()
 	visible = ascii_enabled
+
+
+func _process(_delta: float) -> void:
+	if not (fine_enabled and _fine_ready and _fine_target and _mask_viewport):
+		return
+	var cam := get_viewport().get_camera_3d()
+	if cam == null:
+		return
+	# La caméra jumelle copie exactement la caméra principale.
+	var vp_size := Vector2i(get_viewport().get_visible_rect().size)
+	if _mask_viewport.size != vp_size:
+		_mask_viewport.size = vp_size
+	_mask_camera.global_transform = cam.global_transform
+	_mask_camera.projection = cam.projection
+	_mask_camera.size = cam.size
+	_mask_camera.fov = cam.fov
+	_mask_camera.near = cam.near
+	_mask_camera.far = cam.far
+	# Intervalle de profondeur occupé par le personnage (boîte englobante
+	# généreuse : cape et épée comprises), en distance le long de la vue.
+	var inv := cam.global_transform.affine_inverse()
+	var base := _fine_target.global_position
+	var dmin := INF
+	var dmax := -INF
+	for x: float in [-0.8, 0.8]:
+		for y: float in [0.0, 2.1]:
+			for z: float in [-0.8, 0.8]:
+				var d := -(inv * (base + Vector3(x, y, z))).z
+				dmin = minf(dmin, d)
+				dmax = maxf(dmax, d)
+	_material.set_shader_parameter("player_depth_range", Vector2(dmin, dmax))
 
 
 # --- API de debug -----------------------------------------------------------
@@ -104,6 +153,13 @@ func toggle_edges() -> void:
 func toggle_shape_matching() -> void:
 	shape_matching_enabled = not shape_matching_enabled
 	_material.set_shader_parameter("use_shape_matching", shape_matching_enabled)
+	settings_changed.emit()
+
+
+## Personnage en cellules fines on/off (F5).
+func toggle_fine() -> void:
+	fine_enabled = not fine_enabled
+	_apply_fine()
 	settings_changed.emit()
 
 
@@ -188,7 +244,49 @@ func _rebuild_atlas() -> void:
 	_material.set_shader_parameter("ramp", ramp)
 	_material.set_shader_parameter("ramp_count", ramp.size())
 	_material.set_shader_parameter("cell_size", size)
+
+	# Atlas des cellules fines (mêmes descripteurs de forme et même rampe :
+	# ils ne dépendent pas de la taille).
+	_fine_ready = false
+	if _mask_viewport and fine_cell_size < size:
+		var fine_image := await _atlas_generator.render(glyph_set, fine_cell_size, _font_for_cell(fine_cell_size), _font_size_for_cell(fine_cell_size))
+		if my_id != _build_id:
+			return
+		if fine_image:
+			_material.set_shader_parameter("fine_glyph_atlas", ImageTexture.create_from_image(fine_image))
+			_material.set_shader_parameter("fine_cell_size", fine_cell_size)
+			_fine_ready = true
+	_apply_fine()
 	settings_changed.emit()
+
+
+## Crée la caméra jumelle et son viewport : seul le calque du personnage y est
+## rendu, sur fond transparent. Le shader lit l'alpha comme masque.
+func _setup_fine_pass() -> void:
+	_mask_viewport = SubViewport.new()
+	_mask_viewport.name = "PlayerMask"
+	_mask_viewport.transparent_bg = true
+	_mask_viewport.msaa_3d = Viewport.MSAA_DISABLED
+	_mask_viewport.positional_shadow_atlas_size = 0
+	_mask_viewport.render_target_update_mode = SubViewport.UPDATE_DISABLED
+	_mask_camera = Camera3D.new()
+	_mask_camera.cull_mask = character_layers
+	# Environnement propre : fond vide (transparent), ni brouillard ni SSAO.
+	var env := Environment.new()
+	env.background_mode = Environment.BG_CLEAR_COLOR
+	_mask_camera.environment = env
+	_mask_viewport.add_child(_mask_camera)
+	add_child(_mask_viewport)
+	_mask_camera.current = true
+	_material.set_shader_parameter("player_mask", _mask_viewport.get_texture())
+
+
+## Active la passe fine dans le shader seulement si tout est prêt.
+func _apply_fine() -> void:
+	var on := fine_enabled and _fine_ready
+	_material.set_shader_parameter("fine_enabled", on)
+	if _mask_viewport:
+		_mask_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS if on else SubViewport.UPDATE_DISABLED
 
 
 ## Taille de police à utiliser pour une taille de cellule donnée.

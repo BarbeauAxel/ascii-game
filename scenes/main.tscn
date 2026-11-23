@@ -9,6 +9,7 @@
 [ext_resource type="Script" path="res://scripts/world/nature.gd" id="7_nature"]
 [ext_resource type="Script" path="res://scripts/world/flicker_light.gd" id="8_flicker"]
 [ext_resource type="Script" path="res://scripts/world/rain.gd" id="9_rain"]
+[ext_resource type="FontFile" path="res://fonts/PressStart2P-Regular.ttf" id="10_font"]
 
 [sub_resource type="Environment" id="Env_night"]
 background_mode = 1
@@ -123,6 +124,7 @@ mesh = SubResource("Mesh_fullscreen")
 material_override = SubResource("Mat_ascii")
 cast_shadow = 0
 script = ExtResource("4_ascii")
+fine_target_path = NodePath("../../Player")
 
 [node name="HUD" type="CanvasLayer" parent="."]
 
@@ -136,6 +138,17 @@ theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
 theme_override_constants/outline_size = 4
 theme_override_font_sizes/font_size = 14
 text = "..."
+
+[node name="PlayerName" type="Label" parent="HUD"]
+offset_right = 200.0
+offset_bottom = 16.0
+theme_override_colors/font_color = Color(0.92, 0.86, 0.72, 1)
+theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
+theme_override_constants/outline_size = 4
+theme_override_fonts/font = ExtResource("10_font")
+theme_override_font_sizes/font_size = 8
+horizontal_alignment = 1
+text = "Aldren"
 
 [node name="FpsLabel" type="Label" parent="HUD"]
 visible = false

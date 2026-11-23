@@ -38,6 +38,17 @@ uniform ivec4 dir_glyphs;         // index des glyphes | / - \
 
 uniform int cell_size : hint_range(2, 32) = 5;
 
+// --- Joueur en cellules fines (F5) ---
+// Masque : image d'une seconde caméra qui ne voit que le personnage (alpha = 1
+// sur sa silhouette). Un pixel du masque n'est retenu que si la profondeur de
+// la scène y tombe dans l'intervalle de profondeur du personnage : un mur
+// placé devant lui reste en cellules normales.
+uniform bool fine_enabled = false;
+uniform int fine_cell_size : hint_range(2, 32) = 3;
+uniform sampler2D fine_glyph_atlas : filter_nearest, repeat_disable;
+uniform sampler2D player_mask : filter_nearest, repeat_disable;
+uniform vec2 player_depth_range = vec2(0.0, 0.0);
+
 group_uniforms tonemapping;
 // Courbe appliquée à la luminance linéaire de la scène AVANT le choix du glyphe :
 // t = 1 - exp(-l * exposure)  puis  t^(1/gamma)  puis contraste autour de 0.5.
@@ -159,6 +170,20 @@ void fragment() {
 		// 1. Cellule courante
 		// -----------------------------------------------------------------
 		float cs = float(cell_size);
+		// Joueur en cellules fines : la grille fine remplace la grille normale
+		// sur les pixels où le personnage est visible.
+		bool fine = false;
+		if (fine_enabled) {
+			float fcs = float(fine_cell_size);
+			vec2 fuv = (floor(FRAGCOORD.xy / fcs) * fcs + 0.5 * fcs) * texel;
+			if (texture(player_mask, fuv).a > 0.5) {
+				float fd = linear_depth(fuv, INV_PROJECTION_MATRIX);
+				if (fd > player_depth_range.x - 0.15 && fd < player_depth_range.y + 0.15) {
+					fine = true;
+					cs = fcs;
+				}
+			}
+		}
 		vec2 cell = floor(FRAGCOORD.xy / cs);
 		vec2 cell_origin = cell * cs;
 		vec2 local = fract(FRAGCOORD.xy / cs); // position du pixel dans sa cellule (0..1)
@@ -309,7 +334,8 @@ void fragment() {
 		// 5. Masque du glyphe dans l'atlas, à la position locale du pixel
 		// -----------------------------------------------------------------
 		vec2 atlas_uv = vec2((float(glyph) + local.x) / float(glyph_count), local.y);
-		float mask = texture(glyph_atlas, atlas_uv).a;
+		// Cellules fines : atlas rendu à leur taille (glyphes nets, pas réduits).
+		float mask = fine ? texture(fine_glyph_atlas, atlas_uv).a : texture(glyph_atlas, atlas_uv).a;
 
 		// -----------------------------------------------------------------
 		// 6. Couleur : palette naturelle désaturée, lumières chaudes vives
