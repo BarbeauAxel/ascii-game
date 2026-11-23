@@ -130,11 +130,14 @@ func _process(_delta: float) -> void:
 		if character == null or ranges.size() >= MAX_CHARACTERS:
 			continue
 		var base := character.global_position
+		# Taille propre au personnage si elle est fournie (gardien géant).
+		var height: float = character.get_meta("fine_height", 2.1)
+		var radius: float = character.get_meta("fine_radius", 0.9)
 		var dmin := INF
 		var dmax := -INF
-		for x: float in [-0.9, 0.9]:
-			for y: float in [0.0, 2.1]:
-				for z: float in [-0.9, 0.9]:
+		for x: float in [-radius, radius]:
+			for y: float in [0.0, height]:
+				for z: float in [-radius, radius]:
 					var d := -(inv * (base + Vector3(x, y, z))).z
 					dmin = minf(dmin, d)
 					dmax = maxf(dmax, d)

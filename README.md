@@ -183,15 +183,29 @@ est aussi exécuté dans l'éditeur, on le voit donc dans la scène).
 - **HUD de debug** (états F1…F11, police, rampe) : masqué par défaut, F6
   l'affiche.
 
-## Objectif : vaincre les squelettes
+## Objectif : vaincre les squelettes, puis le Gardien
 
-Il faut vaincre les 5 squelettes ; le compteur en haut de l'écran suit la
-progression. Un squelette vaincu s'effondre en tas d'os pour de bon : ses yeux
-s'éteignent et son âme s'échappe en particules bleues qui s'élèvent pendant
-quelques secondes. Quand les 5 sont vaincus, les cierges de l'autel
-s'embrasent, une colonne de lumière dorée s'élève et le message « La chapelle
-est purifiée » apparaît, avec un accord de victoire. **R** relance la partie
-(à tout moment).
+Il faut d'abord vaincre les 5 squelettes ; le compteur en haut de l'écran
+suit la progression. Un squelette vaincu s'effondre en tas d'os pour de bon :
+ses yeux s'éteignent et son âme s'échappe en particules bleues.
+
+Quand les 5 sont vaincus, la terre gronde (son `rumble`, secousse) et **le
+Gardien de l'ossuaire** se relève lentement devant l'autel. C'est le même
+squelette que les autres, réglé autrement (`spawn_boss()` dans
+`enemy_spawner.gd`) :
+
+- **Apparence** : 1,6 fois plus grand, heaume à cornes, couronne rouillée,
+  cape en lambeaux, grande hache. Ses yeux éclairent ce qui l'entoure de
+  rouge. Ses sons sont plus graves.
+- **Résistance** : 120 PV, soit une dizaine de coups d'épée, avec une barre de vie en
+  haut de l'écran. Il ne chancelle qu'un coup sur trois (`poise`).
+- **Attaques** : coup vertical lourd (28 dégâts, armé 0,85 s) et large
+  balayage en arc (20 dégâts, plus de portée, difficile à esquiver de
+  côté), en alternance. La parade de face réduit les deux.
+
+Sa défaite déclenche la victoire : les cierges de l'autel s'embrasent, une
+colonne de lumière dorée s'élève, le message « La chapelle est purifiée »
+apparaît avec un accord de victoire. **R** relance la partie (à tout moment).
 
 ## Son (`scripts/audio/sfx.gd`)
 
@@ -210,7 +224,8 @@ sinusoïdes et d'enveloppes. Ils sont stockés en AudioStreamWAV 16 bits mono à
 | `rattle` | squelette qui repère, poursuit, arme son coup | salve de clics secs |
 | `collapse` | squelette vaincu | cascade de clics + deux chocs sourds |
 | `soul` | âme qui s'échappe | voix aérienne qui monte, légèrement vibrée |
-| `victory` | 5 squelettes vaincus | cloche puis accord majeur |
+| `rumble` | éveil du Gardien | grondement grave modulé + cliquetis |
+| `victory` | Gardien vaincu | cloche puis accord majeur |
 | ambiance | en boucle | vent par rafales + grillons |
 | pluie | en boucle, suit F3 | bruissement + impacts de gouttes |
 
@@ -230,9 +245,29 @@ modifient pas.
 ## Combat et squelettes
 
 - **Soldat** (`player.gd`) : 100 PV.
-  - **Attaque** (clic gauche ou J) : coup d'épée armé au-dessus de l'épaule,
-    puis porté vers l'avant. L'impact tombe à mi-animation et touche les
-    ennemis dans un arc frontal (`attack_reach` 1,9 m, 12 dégâts).
+  - **Attaque** (clic gauche ou J) : chaque clic donne un coup tiré au
+    hasard parmi la taille, le revers et le vertical, jamais deux fois le
+    même de suite. Un clic pendant un coup enchaîne le suivant dès sa fin. En
+    courant, c'est un estoc. Chaque coup a sa propre animation et sa zone :
+
+    | Coup | Geste | Portée | Arc | Dégâts |
+    |------|-------|--------|-----|--------|
+    | Taille | horizontale, de droite à gauche | 2,0 m | très large (côtés compris) | 10 |
+    | Revers | diagonal, remonte de gauche à droite | 1,9 m | large | 10 |
+    | Vertical | armé au-dessus de l'épaule, frappe vers le bas | 1,9 m | étroit | 18 (+ secousse) |
+    | Estoc | en courant (Maj) : fente en avant, épée pointée | 2,5 m | très étroit | 16 |
+
+    Les animations engagent tout le corps. Elles sont décrites par des poses
+    clés dans `soldier.gd` (`MOVES`) : bras de l'épée (épaule, coude,
+    poignet), bras du bouclier en contrepoids, buste (penché, torsion), bassin
+    (rotation, descente) et jambes (appuis fléchis, pas en avant pour le coup
+    vertical, fente pour l'estoc). Chaque coup passe par une anticipation
+    (pose armée), l'impact, puis un accompagnement. Le bassin et les jambes
+    partent juste avant le bras, et la tête compense la rotation pour garder
+    les yeux sur la cible. Pendant un coup, le soldat avance à peine, ce qui
+    l'engage et évite que ses pieds glissent. Les effets (portée, arc,
+    dégâts, élan) sont dans `player.gd` (`HITS`). L'impact tombe sur l'image
+    clé de chaque animation.
   - **Parade** (clic droit ou K, maintenu) : le bouclier passe devant le buste.
     Un coup reçu de face n'inflige que 15 % des dégâts, et l'on avance au
     ralenti sans se retourner.
@@ -246,7 +281,7 @@ modifient pas.
 - **Squelettes** (`scripts/enemies/skeleton.gd`) : construits en code comme le
   soldat (crâne, mâchoire, cage thoracique en anneaux, vertèbres, os longs,
   haillons, épée rouillée), animés de façon procédurale avec une démarche
-  raide et saccadée. 30 PV, soit 3 coups d'épée.
+  raide et saccadée. 30 PV, soit 3 coups légers (ou 2 avec le coup vertical).
   - **Comportement** : errance autour de leur poste, poursuite dès que le
     joueur est à 9 m (la mâchoire claque), attaque armée au-dessus de la
     tête (0,55 s pour parer ou reculer), chancellement et léger recul quand

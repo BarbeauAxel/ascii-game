@@ -11,6 +11,11 @@ extends CharacterBody3D
 ##   CHANCELLE : touché, il recule (recul + éclat blanc) ;
 ##   VAINCU    : effondré en tas d'os pour de bon ; son âme s'échappe en
 ##               particules bleues qui s'élèvent quelques secondes.
+##   ÉVEIL     : (gardien) se relève lentement d'un tas d'os, puis attaque.
+##
+## Gardien (`is_boss`) : même squelette, agrandi (`size_scale`), avec heaume à
+## cornes, couronne, cape et grande hache ; deux attaques en alternance
+## (coup vertical, balayage large) ; ne chancelle qu'un coup sur `poise`.
 ##
 ## Les os sont exagérés (2 à 3 fois l'épaisseur réelle) : à 5 px par
 ## cellule, un os réaliste tiendrait dans moins d'une cellule et disparaîtrait.
@@ -19,6 +24,7 @@ extends CharacterBody3D
 ## un mur, il longe l'obstacle quelques instants). Pas de navmesh.
 
 signal died
+signal health_changed(health: float, max_health: float)
 ## Durée pendant laquelle l'âme s'échappe après la défaite (secondes).
 const SOUL_TIME := 3.5
 
@@ -36,13 +42,25 @@ const SOUL_TIME := 3.5
 ## Couleur de l'âme qui s'échappe à la défaite (particules).
 @export var soul_color := Color(0.6, 0.85, 1.0)
 
-enum State { WANDER, CHASE, ATTACK, STAGGER, DEAD }
+@export_group("Attaque")
+## Armé (le joueur a le temps de parer / reculer), impact, fin de l'attaque (s).
+@export var attack_windup := 0.55
+@export var attack_strike := 0.72
+@export var attack_end := 1.3
+
+@export_group("Gardien")
+@export var is_boss := false
+## Échelle de tout le squelette (visuel, collision, portée de vue).
+@export var size_scale := 1.0
+## Ne chancelle qu'un coup reçu sur `poise` (1 = à chaque coup).
+@export var poise := 1
+## Apparaît effondré et se relève (durée de l'éveil en secondes, 0 = debout).
+@export var rise_time := 0.0
+
+enum State { WANDER, CHASE, ATTACK, STAGGER, DEAD, RISING }
 
 ## Calque « cellules fines » partagé avec le soldat (soldier.gd, FINE_LAYER).
 const FINE_LAYER := 3
-const ATTACK_WINDUP := 0.55   # armé (le joueur a le temps de parer / reculer)
-const ATTACK_STRIKE := 0.72   # instant de l'impact
-const ATTACK_END := 1.3
 
 var state := State.WANDER
 var health := 0.0
@@ -65,6 +83,10 @@ var _los_timer := 0.0
 var _last_seen := Vector3.ZERO
 var _lost_time := 0.0
 var _rattle_timer := 0.0
+var _attack_kind := 0       # 0 = coup vertical, 1 = balayage (gardien)
+var _attacks_done := 0
+var _hits_taken := 0
+var _voice_pitch := 1.0     # sons plus graves pour un grand squelette
 var _gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity")
 var _collision: CollisionShape3D
 # Âme qui s'échappe à la défaite : particules bleues qui montent.
@@ -108,11 +130,15 @@ func _ready() -> void:
 
 	_collision = CollisionShape3D.new()
 	var capsule := CapsuleShape3D.new()
-	capsule.radius = 0.3
-	capsule.height = 1.75
+	capsule.radius = 0.3 * size_scale
+	capsule.height = 1.75 * size_scale
 	_collision.shape = capsule
-	_collision.position = Vector3(0, 0.875, 0)
+	_collision.position = Vector3(0, 0.875 * size_scale, 0)
 	add_child(_collision)
+	_voice_pitch = 1.0 / size_scale
+	# Boîte englobante lue par le shader ASCII (test de profondeur des cellules fines).
+	set_meta("fine_height", 2.1 * size_scale)
+	set_meta("fine_radius", 0.9 * size_scale)
 
 	_make_materials()
 	_make_soul_fx()
@@ -120,7 +146,11 @@ func _ready() -> void:
 	_visual.name = "Visual"
 	add_child(_visual)
 	_build()
+	_visual.scale = Vector3.ONE * size_scale
 	_visual.rotation.y = _rng.randf() * TAU
+	if rise_time > 0.0:
+		_set_state(State.RISING)
+		_collapse = 1.0
 
 
 func is_alive() -> bool:
@@ -131,22 +161,26 @@ func is_alive() -> bool:
 func take_damage(amount: float, from: Vector3) -> void:
 	if state == State.DEAD:
 		return
+	if state == State.RISING:
+		return
 	health -= amount
+	health_changed.emit(maxf(health, 0.0), max_health)
 	_flash = 1.0
+	_hits_taken += 1
 	var push := global_position - from
 	push.y = 0.0
-	_knockback = push.normalized() * 2.0
+	_knockback = push.normalized() * 2.0 / size_scale
 	if health <= 0.0:
 		_set_state(State.DEAD)
 		# Plus d'obstacle pour les autres (le joueur passe sur le tas d'os),
 		# mais la collision avec le sol reste : sinon la gravité l'entraînerait
 		# sous la terre.
 		set_deferred("collision_layer", 0)
-		Sfx.play("collapse", global_position + Vector3.UP * 0.5)
+		Sfx.play("collapse", global_position + Vector3.UP * 0.5, 0.0, 0.08, _voice_pitch)
 		get_tree().create_timer(0.35).timeout.connect(func() -> void:
-			Sfx.play("soul", global_position + Vector3.UP, -2.0, 0.05))
+			Sfx.play("soul", global_position + Vector3.UP, -2.0, 0.05, _voice_pitch))
 		died.emit()
-	else:
+	elif _hits_taken % poise == 0:
 		_set_state(State.STAGGER)
 
 
@@ -189,7 +223,7 @@ func _physics_process(delta: float) -> void:
 		State.WANDER:
 			if dist < sight_range and _sees_player:
 				_set_state(State.CHASE)
-				Sfx.play("rattle", global_position + Vector3.UP * 1.4)
+				Sfx.play("rattle", global_position + Vector3.UP * 1.4, 0.0, 0.08, _voice_pitch)
 			elif _wander_wait > 0.0:
 				_wander_wait -= delta
 			else:
@@ -208,14 +242,17 @@ func _physics_process(delta: float) -> void:
 				_wander_target = home
 			elif dist < attack_range and _sees_player:
 				_set_state(State.ATTACK)
-				Sfx.play("rattle", global_position + Vector3.UP * 1.4, 2.0)
+				# Le gardien alterne coup vertical et balayage.
+				_attack_kind = _attacks_done % 2 if is_boss else 0
+				_attacks_done += 1
+				Sfx.play("rattle", global_position + Vector3.UP * 1.4, 2.0, 0.08, _voice_pitch)
 			elif _sees_player:
 				desired = to_player.normalized() * chase_speed
 				# Claquements d'os de temps en temps pendant la poursuite.
 				_rattle_timer -= delta
 				if _rattle_timer <= 0.0:
 					_rattle_timer = _rng.randf_range(1.8, 3.5)
-					Sfx.play("rattle", global_position + Vector3.UP * 1.4, -4.0)
+					Sfx.play("rattle", global_position + Vector3.UP * 1.4, -4.0, 0.08, _voice_pitch)
 			else:
 				# Va voir là où il l'a aperçu pour la dernière fois.
 				var to_last := _last_seen - global_position
@@ -224,18 +261,27 @@ func _physics_process(delta: float) -> void:
 					desired = to_last.normalized() * chase_speed
 		State.ATTACK:
 			face = to_player
-			if not _hit_done and _state_time >= ATTACK_STRIKE:
+			if not _hit_done and _state_time >= attack_strike:
 				_hit_done = true
 				var forward := -_visual.global_basis.z
-				if dist < attack_range + 0.4 and forward.dot(to_player.normalized()) > 0.35 and _line_of_sight(1.0):
-					_player.take_damage(attack_damage, global_position)
-			if _state_time >= ATTACK_END:
+				Sfx.play("swing", global_position + Vector3.UP * 1.5, 0.0, 0.08, _voice_pitch)
+				# Coup vertical : étroit, devant. Balayage : large arc, plus loin,
+				# un peu moins fort.
+				var reach := attack_range + (0.9 if _attack_kind == 1 else 0.4)
+				var arc := -0.15 if _attack_kind == 1 else 0.35
+				var damage := attack_damage * (0.7 if _attack_kind == 1 else 1.0)
+				if dist < reach and forward.dot(to_player.normalized()) > arc and _line_of_sight(1.0):
+					_player.take_damage(damage, global_position)
+			if _state_time >= attack_end:
 				_set_state(State.CHASE)
 		State.STAGGER:
 			if _state_time >= 0.45:
 				_set_state(State.CHASE)
 		State.DEAD:
 			pass
+		State.RISING:
+			if _state_time >= rise_time:
+				_set_state(State.CHASE)
 
 	# Contournement : s'il bute contre un mur, il le longe un moment.
 	if _avoid_time > 0.0:
@@ -281,8 +327,12 @@ func _process(delta: float) -> void:
 	var speed := Vector2(velocity.x, velocity.z).length()
 	_walk = lerpf(_walk, clampf(speed / 1.4, 0.0, 1.0), 1.0 - exp(-8.0 * delta))
 	_phase = fmod(_phase + speed / 1.3 * TAU * delta, TAU)
-	var target_collapse := 1.0 if state == State.DEAD else 0.0
-	_collapse = move_toward(_collapse, target_collapse, delta * 4.0)
+	if state == State.RISING:
+		# Éveil : le tas d'os se redresse lentement.
+		_collapse = 1.0 - smoothstep(0.3, rise_time, _state_time)
+	else:
+		var target_collapse := 1.0 if state == State.DEAD else 0.0
+		_collapse = move_toward(_collapse, target_collapse, delta * 4.0)
 	_flash = move_toward(_flash, 0.0, delta * 5.0)
 
 	var s := sin(_phase)
@@ -319,12 +369,23 @@ func _process(delta: float) -> void:
 		_shoulder[i].rotation = Vector3(lerpf(arm + 0.1, 0.2, k), 0.0, lerpf(side * -0.12, side * -0.9, k))
 		_elbow[i].rotation.x = lerpf(0.35 + 0.3 * w, 0.1, k)
 
-	# Attaque (bras droit) : armé au-dessus de la tête, puis coup vers le bas.
-	if state == State.ATTACK:
+	# Balayage (gardien) : bras tendu sur le côté, le buste pivote d'un coup.
+	if state == State.ATTACK and _attack_kind == 1:
 		var t := _state_time
-		var raise := smoothstep(0.0, ATTACK_WINDUP, t)
-		var strike := smoothstep(ATTACK_WINDUP, ATTACK_STRIKE, t)
-		var back := smoothstep(ATTACK_STRIKE + 0.15, ATTACK_END, t)
+		var raise := smoothstep(0.0, attack_windup, t)
+		var strike := smoothstep(attack_windup, attack_strike, t)
+		var weight := 1.0 - smoothstep(attack_strike + 0.2, attack_end, t)
+		_shoulder[1].rotation.x = lerpf(_shoulder[1].rotation.x, 0.6, weight)
+		_shoulder[1].rotation.z = lerpf(_shoulder[1].rotation.z, 1.35, weight)
+		_elbow[1].rotation.x = lerpf(_elbow[1].rotation.x, 0.25, weight)
+		_spine.rotation.y += (0.9 * raise - 2.0 * strike) * weight
+		_spine.rotation.x += 0.15 * raise * weight
+	# Attaque (bras droit) : armé au-dessus de la tête, puis coup vers le bas.
+	elif state == State.ATTACK:
+		var t := _state_time
+		var raise := smoothstep(0.0, attack_windup, t)
+		var strike := smoothstep(attack_windup, attack_strike, t)
+		var back := smoothstep(attack_strike + 0.15, attack_end, t)
 		var weight := 1.0 - back
 		var sx := lerpf(lerpf(0.1, 2.7, raise), -0.3, strike)
 		_shoulder[1].rotation.x = lerpf(_shoulder[1].rotation.x, sx, weight)
@@ -398,6 +459,28 @@ func _build() -> void:
 		_mesh(_head, _sphere(0.032), _m_socket, Vector3(side * 0.042, 0.095, -0.088))
 		_mesh(_head, _sphere(0.016), _m_eye, Vector3(side * 0.042, 0.095, -0.102))
 	_mesh(_head, _box(Vector3(0.025, 0.03, 0.02)), _m_socket, Vector3(0, 0.05, -0.108))
+	if is_boss:
+		# Heaume à cornes et couronne rouillée.
+		_mesh(_head, _cyl(0.125, 0.13, 0.08), _m_rust, Vector3(0, 0.16, 0.005))
+		var crown := TorusMesh.new()
+		crown.inner_radius = 0.115
+		crown.outer_radius = 0.14
+		crown.rings = 16
+		crown.ring_segments = 4
+		_mesh(_head, crown, _m_rust, Vector3(0, 0.205, 0.005))
+		for k in 5:
+			var a := TAU * k / 5.0
+			_mesh(_head, _box(Vector3(0.025, 0.07, 0.025)), _m_rust, Vector3(cos(a) * 0.128, 0.245, sin(a) * 0.128 + 0.005))
+		for side: float in [-1.0, 1.0]:
+			_mesh(_head, _cyl(0.0, 0.03, 0.2), _m_bone, Vector3(side * 0.14, 0.2, 0.0), Vector3(0, 0, side * -0.9))
+		var eyes := OmniLight3D.new()
+		eyes.light_color = eye_color
+		eyes.light_energy = 1.4
+		eyes.omni_range = 3.5
+		eyes.position = Vector3(0, 0.1, -0.2)
+		_head.add_child(eyes)
+		# Cape en lambeaux dans le dos.
+		_mesh(_chest, _box(Vector3(0.42, 0.75, 0.015)), _m_rag, Vector3(0, -0.1, 0.13), Vector3(-0.12, 0, 0))
 	_jaw = _joint(_head, Vector3(0, 0.025, 0.02))
 	_mesh(_jaw, _box(Vector3(0.13, 0.045, 0.11)), _m_bone, Vector3(0, -0.02, -0.065))
 
@@ -413,7 +496,14 @@ func _build() -> void:
 		_mesh(hand, _box(Vector3(0.07, 0.1, 0.045)), _m_bone, Vector3(0, -0.04, 0))
 		_shoulder.append(shoulder)
 		_elbow.append(elbow)
-		if i == 1:
+		if i == 1 and is_boss:
+			# Grande hache : long manche, fer en croissant, pointe.
+			var axe := _joint(hand, Vector3(0, -0.05, 0), Vector3(1.25, 0, 0))
+			_mesh(axe, _cyl(0.02, 0.02, 1.0), _m_rag, Vector3(0, -0.3, 0))
+			_mesh(axe, _box(Vector3(0.28, 0.26, 0.02)), _m_rust, Vector3(0.12, -0.7, 0))
+			_mesh(axe, _box(Vector3(0.06, 0.38, 0.02)), _m_rust, Vector3(0.27, -0.7, 0))
+			_mesh(axe, _box(Vector3(0.05, 0.12, 0.02)), _m_rust, Vector3(0, -0.86, 0))
+		elif i == 1:
 			# Épée rouillée et ébréchée.
 			var sword := _joint(hand, Vector3(0, -0.05, 0), Vector3(1.2, 0, 0))
 			_mesh(sword, _cyl(0.015, 0.015, 0.11), _m_rag, Vector3(0, 0.0, 0))

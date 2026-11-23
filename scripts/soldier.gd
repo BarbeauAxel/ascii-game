@@ -83,9 +83,87 @@ var _run := 0.0         # 0 = marche, 1 = course (lissé)
 var _air := 0.0         # 0 = au sol, 1 = en l'air (lissé)
 
 # Combat
-const ATTACK_DURATION := 0.5
-const ATTACK_HIT_AT := 0.5     # fraction de ATTACK_DURATION où l'épée frappe
+## Coups d'épée, animés sur tout le corps. Chaque coup va de la pose de
+## repos (marche) à une pose « armée » (anticipation), puis frappe jusqu'à une
+## pose « finale » (impact et accompagnement) et revient au repos.
+##
+## Une pose décrit tout le corps :
+##   arm    : bras de l'épée [épaule (x, y, z), coude, poignet]
+##            épaule x : vers l'avant / le haut ; y : pivoté à gauche (+) ou à
+##            droite (-) ; z : écarté. Poignet ≈ -1 : lame dans l'axe du bras.
+##   shield : bras du bouclier [épaule (x, y, z), coude] : contrepoids
+##   torso  : buste (penché en avant x, torsion y ; + = vers la gauche)
+##   hips   : bassin (rotation y, descente en m, roulis)
+##   legs   : [cuisse G, genou G, cuisse D, genou D] (cuisse + = vers
+##            l'avant, genou - = plié)
+## Le bassin et les jambes partent un peu avant le bras (le mouvement naît
+## des appuis), la tête compense pour garder les yeux sur la cible.
+## windup / hit : fractions de la durée (fin de l'armé, impact).
+## player.gd lit `duration` et `hit` pour caler les dégâts sur l'impact.
+const MOVES := [
+	{ # 0 : taille horizontale, de droite à gauche
+		"name": "taille", "duration": 0.48, "windup": 0.34, "hit": 0.52,
+		"start": {
+			"arm": [Vector3(1.35, -1.35, 0.15), 0.5, -1.0],
+			"shield": [Vector3(0.35, 0.0, -0.55), 0.9],
+			"torso": Vector2(0.05, -0.6), "hips": Vector3(-0.45, 0.07, 0.05),
+			"legs": [0.3, -0.4, -0.3, -0.3],
+		},
+		"end": {
+			"arm": [Vector3(1.45, 1.1, 0.0), 0.2, -1.0],
+			"shield": [Vector3(-0.45, 0.0, -0.4), 0.6],
+			"torso": Vector2(-0.15, 0.75), "hips": Vector3(0.5, 0.1, -0.06),
+			"legs": [0.35, -0.5, -0.4, -0.25],
+		},
+	},
+	{ # 1 : revers diagonal, remonte de gauche à droite
+		"name": "revers", "duration": 0.48, "windup": 0.34, "hit": 0.52,
+		"start": {
+			"arm": [Vector3(0.8, 1.1, 0.0), 1.2, -0.9],
+			"shield": [Vector3(0.6, 0.0, 0.2), 1.3],
+			"torso": Vector2(0.2, 0.75), "hips": Vector3(0.5, 0.12, -0.04),
+			"legs": [0.25, -0.55, -0.3, -0.45],
+		},
+		"end": {
+			"arm": [Vector3(2.1, -1.2, 0.25), 0.15, -1.1],
+			"shield": [Vector3(-0.25, 0.0, -0.7), 0.5],
+			"torso": Vector2(-0.2, -0.75), "hips": Vector3(-0.45, 0.02, 0.05),
+			"legs": [0.1, -0.15, -0.15, -0.1],
+		},
+	},
+	{ # 2 : coup vertical, armé au-dessus de l'épaule, pas en avant (le plus lourd)
+		"name": "vertical", "duration": 0.62, "windup": 0.42, "hit": 0.56,
+		"start": {
+			"arm": [Vector3(2.7, 0.0, 0.35), 1.2, 0.0],
+			"shield": [Vector3(0.9, 0.0, -0.3), 1.0],
+			"torso": Vector2(-0.3, 0.35), "hips": Vector3(-0.2, -0.02, 0.0),
+			"legs": [0.15, -0.1, -0.2, -0.05],
+		},
+		"end": {
+			"arm": [Vector3(-0.3, 0.0, 0.0), 0.1, 0.0],
+			"shield": [Vector3(-0.35, 0.0, -0.55), 0.7],
+			"torso": Vector2(0.5, -0.4), "hips": Vector3(0.15, 0.2, 0.0),
+			"legs": [-0.45, -0.3, 0.6, -0.75],
+		},
+	},
+	{ # 3 : estoc en courant : épée ramenée, puis fente jambe droite en avant
+		"name": "estoc", "duration": 0.55, "windup": 0.32, "hit": 0.5,
+		"start": {
+			"arm": [Vector3(0.4, 0.25, 0.1), 1.7, -1.15],
+			"shield": [Vector3(0.7, 0.0, 0.0), 1.2],
+			"torso": Vector2(0.0, 0.55), "hips": Vector3(-0.5, 0.08, 0.0),
+			"legs": [0.2, -0.4, -0.3, -0.3],
+		},
+		"end": {
+			"arm": [Vector3(1.5, -0.1, 0.0), 0.05, -1.2],
+			"shield": [Vector3(-0.55, 0.0, -0.4), 0.4],
+			"torso": Vector2(0.45, -0.3), "hips": Vector3(0.2, 0.22, 0.0),
+			"legs": [-0.65, -0.15, 0.75, -0.65],
+		},
+	},
+]
 var _attack_t := -1.0          # progression de l'attaque (0..1), -1 = aucune
+var _attack_kind := 0
 var _blocking := false
 var _block := 0.0
 var _flash := 0.0
@@ -360,9 +438,9 @@ func _light(light_name: String, color: Color, energy: float, light_range: float)
 
 # --- Combat -----------------------------------------------------------------------------
 
-## Coup d'épée de haut en bas (durée ATTACK_DURATION). L'impact a lieu à
-## ATTACK_HIT_AT (fraction de la durée) : player.gd s'y cale.
-func play_attack() -> void:
+## Lance le coup `kind` (index dans MOVES).
+func play_attack(kind := 0) -> void:
+	_attack_kind = kind
 	_attack_t = 0.0
 
 
@@ -392,20 +470,59 @@ func _animate_combat(delta: float) -> void:
 		_elbow[0].rotation = _elbow[0].rotation.lerp(Vector3(1.5, -1.35, 0.0), b)
 		_spine.rotation.y += 0.15 * b
 
-	# Attaque : armé au-dessus de l'épaule, puis coup vers l'avant et le bas,
-	# avec torsion du buste.
+	# Attaque : repos -> pose armée -> pose finale (impact) -> repos, sur
+	# tout le corps.
+	_hand[1].rotation = Vector3.ZERO
 	if _attack_t >= 0.0:
-		_attack_t += delta / ATTACK_DURATION
+		var move: Dictionary = MOVES[_attack_kind]
+		_attack_t += delta / float(move["duration"])
 		var t := _attack_t
-		var raise := smoothstep(0.0, 0.38, t)
-		var strike := smoothstep(0.38, ATTACK_HIT_AT, t)
-		var weight := 1.0 - smoothstep(0.7, 1.0, t)
-		var sx := lerpf(lerpf(0.1, 2.6, raise), -0.35, strike)
-		_shoulder[1].rotation.x = lerpf(_shoulder[1].rotation.x, sx, weight)
-		_shoulder[1].rotation.z = lerpf(_shoulder[1].rotation.z, 0.35 * raise * (1.0 - strike), weight)
-		_elbow[1].rotation.x = lerpf(_elbow[1].rotation.x, lerpf(1.1, 0.1, strike), weight)
-		_spine.rotation.y += (0.35 * raise - 0.55 * strike) * weight
-		_spine.rotation.x += (0.1 * raise - 0.25 * strike) * weight
+		var windup: float = move["windup"]
+		var hit: float = move["hit"]
+		var raise := smoothstep(0.0, windup, t)
+		# Le bras frappe ; bassin et jambes partent un peu avant lui.
+		var strike := smoothstep(windup, hit, t)
+		var body := smoothstep(windup * 0.75, hit * 0.92, t)
+		var weight := minf(raise, 1.0 - smoothstep(0.72, 1.0, t))
+		var a: Dictionary = move["start"]
+		var b: Dictionary = move["end"]
+
+		# Bras de l'épée
+		var arm_a: Array = a["arm"]
+		var arm_b: Array = b["arm"]
+		_shoulder[1].rotation = _shoulder[1].rotation.lerp((arm_a[0] as Vector3).lerp(arm_b[0], strike), weight)
+		_elbow[1].rotation.x = lerpf(_elbow[1].rotation.x, lerpf(arm_a[1], arm_b[1], strike), weight)
+		_hand[1].rotation.x = lerpf(0.0, lerpf(arm_a[2], arm_b[2], strike), weight)
+
+		# Bras du bouclier : contrepoids, à l'opposé du coup
+		var sh_a: Array = a["shield"]
+		var sh_b: Array = b["shield"]
+		var shield_w := weight * (1.0 - _block)
+		_shoulder[0].rotation = _shoulder[0].rotation.lerp((sh_a[0] as Vector3).lerp(sh_b[0], body), shield_w)
+		_elbow[0].rotation.x = lerpf(_elbow[0].rotation.x, lerpf(sh_a[1], sh_b[1], body), shield_w)
+
+		# Buste, bassin
+		var torso: Vector2 = (a["torso"] as Vector2).lerp(b["torso"], strike)
+		_spine.rotation.x += torso.x * weight
+		_spine.rotation.y += torso.y * weight
+		var hips: Vector3 = (a["hips"] as Vector3).lerp(b["hips"], body)
+		_hips.rotation.y = lerpf(_hips.rotation.y, hips.x, weight)
+		_hips.rotation.z = lerpf(_hips.rotation.z, hips.z, weight)
+		_hips.position.y -= hips.y * weight
+
+		# Jambes : appuis, flexion, pas en avant ; pieds gardés à plat.
+		var legs_a: Array = a["legs"]
+		var legs_b: Array = b["legs"]
+		for i in 2:
+			var thigh := lerpf(legs_a[i * 2], legs_b[i * 2], body)
+			var knee := lerpf(legs_a[i * 2 + 1], legs_b[i * 2 + 1], body)
+			_thigh[i].rotation.x = lerpf(_thigh[i].rotation.x, thigh, weight)
+			_knee[i].rotation.x = lerpf(_knee[i].rotation.x, knee, weight)
+			_ankle[i].rotation.x = -(_thigh[i].rotation.x + _knee[i].rotation.x) * 0.85
+
+		# La tête compense la rotation du corps : le regard reste sur la cible.
+		_head.rotation.y -= (hips.x + torso.y) * 0.6 * weight
+		_head.rotation.x += 0.15 * torso.x * weight
 		if t >= 1.0:
 			_attack_t = -1.0
 

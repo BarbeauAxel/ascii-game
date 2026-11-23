@@ -118,7 +118,7 @@ func _build() -> void:
 		"Molette : zoom     F3 : pluie     Échap : pause",
 		8, PALE))
 	_title_box.add_child(_spacer(16))
-	_title_box.add_child(_label("Objectif : vaincre les 5 squelettes de la chapelle", 8, GOLD))
+	_title_box.add_child(_label("Objectif : vaincre les 5 squelettes de la chapelle... et ce qui dort sous l'autel", 8, GOLD))
 
 	# Menu pause
 	_pause_box = _centered_box()

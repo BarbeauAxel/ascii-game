@@ -4,8 +4,11 @@ extends CharacterBody3D
 ## soldier.gd (enfant Visual/Soldier), qui lit la vitesse de ce corps.
 ##
 ## Combat :
-##   - attaque (clic gauche ou J) : coup d'épée devant soi ; l'impact tombe au
-##     milieu de l'animation et touche les ennemis dans un arc frontal ;
+##   - attaque (clic gauche ou J) : un coup tiré au hasard parmi taille
+##     horizontale, revers diagonal et coup vertical lourd (jamais deux fois
+##     le même de suite) ; un clic pendant un coup enchaîne le suivant ;
+##     en courant, estoc avec une fente en avant. Chaque coup a sa portée, son
+##     arc et ses dégâts (HITS) ; l'impact tombe sur l'image clé de l'animation ;
 ##   - parade (clic droit ou K, maintenu) : bouclier levé, dégâts reçus de face
 ##     fortement réduits, déplacement ralenti ;
 ##   - à 0 PV : le soldat tombe, puis se relève au point de départ.
@@ -31,10 +34,6 @@ const HIT_FX := preload("res://scripts/fx/hit_fx.gd")
 
 @export_group("Combat")
 @export var max_health := 100.0
-@export var attack_damage := 12.0
-## Portée et ouverture de l'arc frappé (cosinus minimal de l'angle).
-@export var attack_reach := 1.9
-@export var attack_arc := 0.25
 ## Part des dégâts encaissée en parant de face.
 @export var block_factor := 0.15
 @export var block_speed_factor := 0.4
@@ -45,7 +44,23 @@ var health := 0.0
 
 var _soldier: Node3D
 var _spawn := Vector3.ZERO
+## Effet de chaque coup (même ordre que soldier.gd MOVES) : portée (m), arc
+## (cosinus minimal de l'angle avec l'avant : -0.15 = très large, 0.6 = étroit),
+## dégâts, secousse, fente (élan vers l'avant, m/s).
+const HITS := [
+	{"reach": 2.0, "arc": -0.15, "damage": 10.0, "shake": 0.25, "lunge": 1.0},  # taille
+	{"reach": 1.9, "arc": 0.0, "damage": 10.0, "shake": 0.25, "lunge": 1.0},    # revers
+	{"reach": 1.9, "arc": 0.3, "damage": 18.0, "shake": 0.45, "lunge": 1.5},    # vertical
+	{"reach": 2.5, "arc": 0.6, "damage": 16.0, "shake": 0.35, "lunge": 6.5},    # estoc
+]
+const ESTOC := 3
+
 var _attack_timer := -1.0      # temps écoulé depuis le début de l'attaque
+var _attack_kind := 0
+var _last_kind := -1           # dernier coup donné (pour ne pas le répéter)
+var _queued := false           # clic reçu pendant un coup : enchaîner
+var _rng := RandomNumberGenerator.new()
+var _lunge := Vector3.ZERO
 var _attack_hit_done := true
 var _blocking := false
 var _dead_timer := -1.0
@@ -56,6 +71,7 @@ var _knockback := Vector3.ZERO
 
 func _ready() -> void:
 	add_to_group("player")
+	_rng.randomize()
 	add_to_group("characters")
 	_setup_input_actions()
 	_spawn = global_position
@@ -144,8 +160,13 @@ func _physics_process(delta: float) -> void:
 	var speed := run_speed if Input.is_action_pressed("run") else walk_speed
 	if _blocking:
 		speed = walk_speed * block_speed_factor
-	var target := direction * speed + _knockback
+	elif _attack_timer >= 0.0:
+		# Pendant un coup, le soldat est engagé : il avance à peine (sinon ses
+		# pieds glisseraient sous la posture d'appui).
+		speed = walk_speed * 0.25
+	var target := direction * speed + _knockback + _lunge
 	_knockback = _knockback.lerp(Vector3.ZERO, 1.0 - exp(-8.0 * delta))
+	_lunge = _lunge.lerp(Vector3.ZERO, 1.0 - exp(-7.0 * delta))
 	var blend := 1.0 - exp(-acceleration * delta)
 	velocity.x = lerpf(velocity.x, target.x, blend)
 	velocity.z = lerpf(velocity.z, target.z, blend)
@@ -168,41 +189,67 @@ func _update_combat(delta: float) -> void:
 	if _soldier:
 		_soldier.set_blocking(_blocking)
 
-	if _attack_timer < 0.0 and not _blocking and not on_ui and Input.is_action_just_pressed("attack"):
-		_attack_timer = 0.0
-		_attack_hit_done = false
-		if _soldier:
-			_soldier.play_attack()
-		Sfx.play("swing", global_position + Vector3.UP, -3.0, 0.12)
+	var pressed := not _blocking and not on_ui and Input.is_action_just_pressed("attack")
+	if pressed and _attack_timer < 0.0:
+		var running := Input.is_action_pressed("run") and Vector2(velocity.x, velocity.z).length() > walk_speed * 1.3
+		_start_attack(ESTOC if running else _random_move())
+	elif pressed:
+		# Clic pendant un coup : le suivant s'enchaîne dès la fin de celui-ci.
+		_queued = true
+
 	if _attack_timer >= 0.0:
 		_attack_timer += delta
-		var duration := SOLDIER.ATTACK_DURATION
-		var hit_at := SOLDIER.ATTACK_HIT_AT
-		if not _attack_hit_done and _attack_timer >= duration * hit_at:
+		var move: Dictionary = SOLDIER.MOVES[_attack_kind]
+		var duration: float = move["duration"]
+		if not _attack_hit_done and _attack_timer >= duration * float(move["hit"]):
 			_attack_hit_done = true
 			_strike()
 		if _attack_timer >= duration:
 			_attack_timer = -1.0
+			if _queued:
+				_start_attack(_random_move())
 
 
-## Touche tous les ennemis vivants dans l'arc frontal.
+## Coup au hasard parmi taille, revers, vertical, différent du précédent.
+func _random_move() -> int:
+	var choices: Array[int] = [0, 1, 2]
+	choices.erase(_last_kind)
+	return choices[_rng.randi() % choices.size()]
+
+
+func _start_attack(kind: int) -> void:
+	_last_kind = kind
+	_attack_kind = kind
+	_attack_timer = 0.0
+	_attack_hit_done = false
+	_queued = false
+	if _soldier:
+		_soldier.play_attack(kind)
+	# Les coups légers sifflent plus aigu, le coup vertical plus grave.
+	var pitch: float = [1.1, 1.15, 0.85, 1.0][kind]
+	Sfx.play("swing", global_position + Vector3.UP, -3.0, 0.08, pitch)
+	_lunge = _forward() * float(HITS[kind]["lunge"])
+
+
+## Touche tous les ennemis vivants dans la zone du coup en cours.
 func _strike() -> void:
 	var forward := _forward()
 	var hit := false
+	var params: Dictionary = HITS[_attack_kind]
 	for enemy in get_tree().get_nodes_in_group("enemies"):
 		var e := enemy as Node3D
 		if e == null or not e.is_alive():
 			continue
 		var to := e.global_position - global_position
 		to.y = 0.0
-		if to.length() <= attack_reach and forward.dot(to.normalized()) >= attack_arc:
-			e.take_damage(attack_damage, global_position)
+		if to.length() <= params["reach"] and forward.dot(to.normalized()) >= params["arc"]:
+			e.take_damage(params["damage"], global_position)
 			HIT_FX.burst(self, e.global_position + Vector3.UP * 1.1 - to.normalized() * 0.2, Color(0.9, 0.88, 0.8), 14)
 			Sfx.play("hit_bone", e.global_position + Vector3.UP)
 			hit = true
 	if hit:
-		_shake(0.3)
-		_hit_stop(0.05)
+		_shake(params["shake"])
+		_hit_stop(0.07 if _attack_kind == 2 else 0.05)
 
 
 ## Micro-pause : le temps de jeu ralentit presque à l'arrêt quelques

@@ -22,6 +22,8 @@ extends Node3D
 @onready var health_fill: ColorRect = $HUD/HealthBack/HealthFill
 @onready var objective: Label = $HUD/Objective
 @onready var message: Label = $HUD/Message
+@onready var boss_bar: Control = $HUD/BossBar
+@onready var boss_fill: ColorRect = $HUD/BossBar/Back/Fill
 @onready var volume_slider: HSlider = $HUD/Volume/Slider
 @onready var volume_label: Label = $HUD/Volume/Label
 
@@ -113,7 +115,41 @@ func _on_skeleton_died() -> void:
 	_defeated += 1
 	_update_objective()
 	if _defeated >= _skeleton_total:
-		_victory()
+		_awaken_boss.call_deferred()
+
+
+## Les 5 squelettes vaincus : la terre gronde, le Gardien se relève devant
+## l'autel. La victoire ne vient qu'avec sa défaite.
+func _awaken_boss() -> void:
+	await get_tree().create_timer(2.0).timeout
+	var cam := get_viewport().get_camera_3d()
+	if cam and cam.has_method("shake"):
+		cam.shake(0.7)
+	Sfx.play_global("rumble", -2.0)
+	_show_message("Le Gardien s'éveille...", 3.0)
+	objective.text = "Vaincs le Gardien de l'ossuaire"
+	var boss: Node = $Enemies.spawn_boss()
+	boss.died.connect(_on_boss_died)
+	boss.health_changed.connect(func(health: float, max_health: float) -> void:
+		boss_fill.size.x = 318.0 * clampf(health / max_health, 0.0, 1.0))
+	boss_fill.size.x = 318.0
+	boss_bar.visible = true
+
+
+func _on_boss_died() -> void:
+	boss_bar.visible = false
+	objective.text = "Le Gardien est vaincu"
+	await get_tree().create_timer(2.0).timeout
+	_victory()
+
+
+## Message central qui apparaît puis s'efface.
+func _show_message(text: String, duration: float) -> void:
+	message.text = text
+	var tween := create_tween()
+	tween.tween_property(message, "modulate:a", 1.0, 0.8)
+	tween.tween_interval(duration)
+	tween.tween_property(message, "modulate:a", 0.0, 0.8)
 
 
 func _update_objective() -> void:

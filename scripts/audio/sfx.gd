@@ -9,7 +9,8 @@ extends Node
 ##                block (bouclier qui sonne), hurt (coup encaissé)
 ##   Squelettes : rattle (claquements d'os), collapse (effondrement),
 ##                soul (souffle de l'âme qui s'échappe)
-##   Divers     : step (pas dans l'herbe), victory (accord final)
+##   Divers     : step (pas dans l'herbe), victory (accord final),
+##                rumble (grondement, éveil du gardien)
 ##   Ambiance   : vent + grillons (boucle), pluie (boucle, suit F3)
 ##
 ## Les sons ponctuels sont positionnés en 3D. L'« oreille »
@@ -40,6 +41,7 @@ func _ready() -> void:
 	_streams["collapse"] = _wav(_collapse())
 	_streams["soul"] = _wav(_soul())
 	_streams["victory"] = _wav(_victory())
+	_streams["rumble"] = _wav(_rumble())
 	_ambience = _loop_player(_night_loop(), -16.0)
 	_rain = _loop_player(_rain_loop(), -80.0)
 	print("Sons synthétisés en %d ms" % (Time.get_ticks_msec() - t0))
@@ -60,13 +62,13 @@ func _process(_delta: float) -> void:
 
 ## Joue un son à une position du monde. `pitch_var` : variation aléatoire de
 ## hauteur (deux coups ne sonnent jamais exactement pareil).
-func play(sound: String, pos: Vector3, volume_db := 0.0, pitch_var := 0.08) -> void:
+func play(sound: String, pos: Vector3, volume_db := 0.0, pitch_var := 0.08, pitch := 1.0) -> void:
 	if not _streams.has(sound):
 		return
 	var p := AudioStreamPlayer3D.new()
 	p.stream = _streams[sound]
 	p.volume_db = volume_db
-	p.pitch_scale = 1.0 + _rng.randf_range(-pitch_var, pitch_var)
+	p.pitch_scale = pitch * (1.0 + _rng.randf_range(-pitch_var, pitch_var))
 	p.unit_size = 6.0
 	p.max_distance = 45.0
 	add_child(p)
@@ -191,6 +193,21 @@ func _soul() -> PackedFloat32Array:
 		phase2 += TAU * f * 1.5 / RATE
 		lp += 0.08 * (_noise() - lp)
 		d[i] = (sin(phase) * 0.35 + sin(phase2) * 0.12 + lp * 0.5) * env * 0.7
+	return d
+
+
+## Grondement : la terre tremble (éveil du gardien).
+func _rumble() -> PackedFloat32Array:
+	var d := _buf(3.0)
+	var lp := 0.0
+	var lp2 := 0.0
+	for i in d.size():
+		var t := float(i) / RATE
+		lp += 0.02 * (_noise() - lp)
+		lp2 += 0.05 * (lp - lp2)
+		var env := smoothstep(0.0, 0.6, t) * (1.0 - smoothstep(2.0, 3.0, t))
+		d[i] = (lp2 * 9.0 + sin(TAU * 42.0 * t) * 0.3) * env * (0.8 + 0.2 * sin(TAU * 7.0 * t))
+	_add_clicks(d, 30, 0.3, 2.6, 0.25)
 	return d
 
 
