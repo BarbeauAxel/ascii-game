@@ -1,0 +1,24 @@
+; Fichier de configuration du projet Godot.
+; Les actions d'entrée (déplacements) sont créées par script dans
+; scripts/player.gd afin de rester lisibles et indépendantes du clavier
+; (touches physiques : ZQSD sur AZERTY = WASD sur QWERTY).
+
+config_version=5
+
+[application]
+
+config/name="ASCII 3D Prototype"
+config/description="Prototype : scène 3D rendue en glyphes ASCII colorés via un shader de post-traitement."
+run/main_scene="res://scenes/main.tscn"
+config/features=PackedStringArray("4.3", "Forward Plus")
+
+[display]
+
+window/size/viewport_width=1280
+window/size/viewport_height=720
+
+[rendering]
+
+renderer/rendering_method="forward_plus"
+anti_aliasing/quality/msaa_3d=0
+anti_aliasing/quality/screen_space_aa=0
