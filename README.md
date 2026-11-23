@@ -3,9 +3,9 @@
 Une vraie scène 3D (Forward+) convertie à l'écran en glyphes ASCII colorés par
 un shader de post-traitement haute densité (cellules de 5 px, correspondance
 de forme, traits orientés). Un soldat en armure (heaume, plastron, cape,
-bouclier rond, épée longue), animé de façon procédurale, se déplace dans une
-petite salle éclairée par la lune, une lanterne orange et un
-cristal cyan, vue d'en haut en isométrique façon MMO RPG.
+bouclier rond, épée longue), animé de façon procédurale, explore de nuit les
+ruines d'une chapelle gothique au milieu d'une prairie, avec arbres morts et
+cimetière. Tout le décor est construit en code, sans asset importé.
 
 ## Lancer
 
@@ -89,6 +89,11 @@ scenes/player.tscn     joueur (CharacterBody3D + nœud Visual/Soldier)
 scripts/main.gd        touches de debug, HUD, compteur de FPS
 scripts/player.gd      déplacement (marche / course), gravité, saut, actions d'entrée
 scripts/soldier.gd     soldat : construction en code + animation procédurale
+scripts/world/ruins.gd chapelle en ruine, piliers, autel, éboulis, cimetière, chemin
+scripts/world/nature.gd    sol, herbe (MultiMesh), arbres morts, buissons
+scripts/world/stone_material.gd  matériau de pierre partagé (grain triplanaire)
+scripts/world/flicker_light.gd   lumière de flamme vacillante
+shaders/grass.gdshader brins d'herbe : dégradé, vent
 scripts/camera_follow.gd   caméra isométrique orthographique, calage, zoom
 scripts/ascii_post_process.gd  pilote du quad : police, atlas, analyse, réglages
 scripts/glyph_atlas.gd rendu et analyse de l'atlas de glyphes
@@ -128,6 +133,34 @@ est aussi exécuté dans l'éditeur, on le voit donc dans la scène).
   (`rim`) pour se détacher du fond.
 - **Métal à moitié** (`metallic` ≈ 0,45) pour la même raison.
 - Couleurs et intensités réglables dans l'inspecteur (`Player/Visual/Soldier`).
+
+## Le décor (`scripts/world/`)
+
+Construit en code au lancement, avec une graine fixe : c'est toujours le même
+décor. Les scripts tournent aussi dans l'éditeur, on voit donc la ruine dans la
+scène.
+
+- **Chapelle en ruine** (`ruins.gd`) : murs en pierres de taille posées assise
+  par assise (appareil décalé, teintes et mousse variables, joint de mortier
+  sombre). Sommet effrité par un bruit, fenêtres et portail en arc brisé
+  (claveaux, clé, appui, meneau), piliers en tambours (intacts avec chapiteau,
+  brisés, un effondré). S'y ajoutent un dallage disjoint, l'emmarchement, un
+  autel à cierges, des éboulis, un cimetière (stèles, croix penchées) et un
+  chemin dallé. Les murs côté caméra (est, sud) sont effondrés pour ne jamais
+  cacher le joueur. Des milliers de pierres tiennent dans 2 MultiMesh,
+  donc 2 appels de rendu. Collisions uniquement sous 2,6 m.
+- **Nature** (`nature.gd`) : sol texturé ; herbe en touffes, environ 70 000
+  brins dans une MultiMesh, plus dense par plaques, rare dans la nef et sur le
+  chemin ; 9 arbres morts aux branches récursives tordues (un maillage fusionné
+  par arbre) ; buissons.
+- **Vent** (`grass.gdshader`) : rafales qui traversent la prairie et
+  frémissement de chaque brin ; la base reste plantée.
+- **Lumières** : lune froide (ombres), lanterne au portail et cierges de
+  l'autel qui vacillent (`flicker_light.gd`).
+- **Ambiance** : brouillard au ras du sol et occlusion ambiante (SSAO).
+- **Matières souples** : herbe, sol et buissons ont une rugosité de 1.0. Le
+  shader ASCII ne les cerne jamais (`soft_roughness`), sinon chaque touffe
+  deviendrait une boucle de contour. Les matériaux durs restent sous 0.99.
 
 ## Pipeline du shader (`shaders/ascii.gdshader`)
 
@@ -181,16 +214,17 @@ Override*. Les uniforms sont rangés par groupes.
 
 | Groupe | Uniform | Défaut | Rôle |
 |--------|---------|--------|------|
-| tonemapping | `exposure` | 3.0 | compresse les hautes lumières (`1 - exp(-l × exposure)`) |
+| tonemapping | `exposure` | 3.0 (5.0 dans `main.tscn`) | compresse les hautes lumières (`1 - exp(-l × exposure)`) |
 | | `gamma` | 1.6 | > 1 éclaircit les tons sombres |
 | | `contrast` | 1.1 | contraste autour de 0.5 |
 | | `dark_floor` | 0.08 | plancher : glyphes discrets dans le noir (pas sur le ciel) |
 | glyphes | `use_shape_matching` | true | correspondance de forme (F7) |
 | | `shape_contrast` | 1.8 | plus haut = plus de glyphes « de forme » |
-| | `flat_threshold` | 0.003 | sous cette variance, la cellule utilise la rampe |
+| | `flat_threshold` | 0.008 | sous cette variance, la cellule utilise la rampe |
 | contours et traits | `enable_edges` / `enable_strokes` | true | contours / traits orientés (F2) |
 | | `edge_threshold_depth` | 3.0 | rupture de profondeur minimale, en cellules |
 | | `edge_threshold_normal` | 0.5 | pli minimal (1 − cos de l'angle ; 0.5 = 60°) |
+| | `soft_roughness` | 0.99 | rugosité au-delà de laquelle une surface n'est jamais cernée |
 | | `stroke_threshold` | 0.12 | force minimale du gradient pour un trait |
 | | `stroke_coherence` | 0.65 | alignement minimal des gradients (0 à 1) |
 | | `stroke_normal_weight` | 0.5 | poids des normales dans l'orientation |
@@ -258,13 +292,16 @@ Pour voir l'atlas généré, lancez avec `-- --save-atlas`. Il est écrit dans
 
 ## Performances
 
-Mesuré en 1920x1080, sans V-Sync, sur une GTX 1650 SUPER (scène actuelle) :
+Mesuré en 1920x1080, sans V-Sync, sur une GTX 1650 SUPER, au zoom le plus
+large (toute l'herbe à l'écran, pire cas) :
 
 | Mode | FPS | ms / image |
 |------|-----|------------|
-| Rendu 3D brut (F1) | ~640 | 1.56 |
-| ASCII complet | ~365 | 2.73 |
-| ASCII, rampe seule (F7) | ~392 | 2.54 |
+| Rendu 3D brut (F1) | ~155–210 | 4.7–6.5 |
+| ASCII complet | ~153 | 6.5 |
+
+Avec l'ancienne salle de test, sans décor : 640 FPS en rendu brut et 365 en
+ASCII.
 
 Le shader ASCII coûte environ 1.2 ms en 1080p, dont 0.2 ms pour la
 correspondance de forme. Leviers si besoin : réduire `glyph_set`, désactiver
@@ -287,5 +324,7 @@ demande un GPU compatible Vulkan, ou D3D12 sous Windows.
 
 ## Crédits
 
+- Décor, personnage et textures : générés en code (bruit procédural), aucun
+  asset externe.
 - Police **Press Start 2P** de CodeMan38, licence SIL Open Font License 1.1 :
   voir `fonts/README.md` et `fonts/OFL-PressStart2P.txt`.

@@ -54,7 +54,7 @@ uniform bool use_shape_matching = true;
 // plus haut = plus de glyphes « de forme », moins de glyphes de rampe.
 uniform float shape_contrast : hint_range(0.5, 4.0) = 1.8;
 // Variance de luminance en dessous de laquelle la cellule est « uniforme » (rampe).
-uniform float flat_threshold : hint_range(0.0, 0.05) = 0.003;
+uniform float flat_threshold : hint_range(0.0, 0.05) = 0.008;
 
 group_uniforms contours_et_traits;
 uniform bool enable_edges = true;
@@ -67,6 +67,10 @@ uniform float edge_threshold_depth : hint_range(0.0, 20.0) = 3.0;
 // courbe lisse, même petite, ne tourne que peu d'un échantillon à l'autre ;
 // un pli (coin de mur, pièce posée sur une autre) donne un saut net.
 uniform float edge_threshold_normal : hint_range(0.0, 2.0) = 0.5;
+// Rugosité à partir de laquelle une surface est « souple » (herbe, sol,
+// buissons) : pas de contours, seulement glyphes de forme et traits.
+// Les matériaux durs (pierre, métal, bois, tissu) restent en dessous.
+uniform float soft_roughness : hint_range(0.0, 1.0) = 0.99;
 uniform bool enable_strokes = true;
 // Force minimale du gradient de luminance (unités tonemappées) pour un trait.
 uniform float stroke_threshold : hint_range(0.0, 1.0) = 0.12;
@@ -256,8 +260,11 @@ void fragment() {
 				? vec3(dot(gxn, gxn), dot(gyn, gyn), dot(gxn, gyn)) / normal_mag2
 				: vec3(0.0);
 
-			bool depth_edge = enable_edges && depth_lap > edge_threshold_depth;
-			bool normal_edge = enable_edges && crease > edge_threshold_normal;
+			// Matières souples (herbe, sol, feuillage : rugosité >= soft_roughness) :
+			// jamais cernées, sinon chaque touffe d'herbe devient une boucle de contour.
+			bool soft = texture(normal_roughness_texture, center_uv).a >= soft_roughness;
+			bool depth_edge = enable_edges && !soft && depth_lap > edge_threshold_depth;
+			bool normal_edge = enable_edges && !soft && crease > edge_threshold_normal;
 
 			if (depth_edge || normal_edge) {
 				// 4a. Contour : orientation combinée profondeur + normales.

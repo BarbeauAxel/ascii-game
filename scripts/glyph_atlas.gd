@@ -56,7 +56,7 @@ func render(glyphs: String, cell: int, font: Font, font_size: int) -> Image:
 ##                (la région la plus remplie de tout l'atlas vaut 1) ;
 ##   "means"    : PackedFloat32Array, moyenne des 9 régions (densité) ;
 ##   "spreads"  : PackedFloat32Array, écart-type des 9 régions (0 = glyphe uniforme) ;
-##   "asymmetry": PackedFloat32Array, différence gauche/droite (0 = symétrique).
+##   "asymmetry": PackedFloat32Array, différence gauche/droite + haut/bas (0 = symétrique).
 static func analyze(image: Image, glyph_count: int, cell: int) -> Dictionary:
 	var third := float(cell) / 3.0
 	var shapes: Array = []
@@ -103,8 +103,12 @@ static func analyze(image: Image, glyph_count: int, cell: int) -> Dictionary:
 			variance += (regions[i] - mean) * (regions[i] - mean)
 		means.append(mean)
 		spreads.append(sqrt(variance / 9.0))
-		# Miroir gauche/droite : colonnes 0 et 2 de la grille 3x3.
-		asymmetry.append((absf(regions[0] - regions[2]) + absf(regions[3] - regions[5]) + absf(regions[6] - regions[8])) / 3.0)
+		# Asymétrie gauche/droite (colonnes 0 et 2) + haut/bas (lignes 0 et 2) :
+		# un glyphe répété sur une surface uniforme doit être équilibré, sinon il
+		# trace des rayures ("_" -> lignes horizontales, "|" -> colonnes).
+		var lr := (absf(regions[0] - regions[2]) + absf(regions[3] - regions[5]) + absf(regions[6] - regions[8])) / 3.0
+		var tb := (absf(regions[0] - regions[6]) + absf(regions[1] - regions[7]) + absf(regions[2] - regions[8])) / 3.0
+		asymmetry.append(lr + tb)
 
 	return {"shapes": shapes, "means": means, "spreads": spreads, "asymmetry": asymmetry}
 
@@ -136,7 +140,7 @@ static func build_ramp(analysis: Dictionary, levels: int, excluded: PackedInt32A
 				continue
 			# L'asymétrie mesurée est bruitée aux petites tailles (glyphe décalé
 			# d'un demi-pixel) : elle ne sert qu'à départager à densité proche.
-			var score := absf(means[g] - target) + 0.15 * spreads[g] + 0.25 * asymmetry[g]
+			var score := absf(means[g] - target) + 0.3 * spreads[g] + 0.3 * asymmetry[g]
 			if score < best_score:
 				best_score = score
 				best = g
