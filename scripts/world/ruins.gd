@@ -161,8 +161,10 @@ func _wall(a: Vector2, b: Vector2, max_height: float, ruin: float, openings: Arr
 			var center := origin + dir * tm + Vector3.UP * (y + h * 0.5) + normal * _rng.randf_range(-0.01, 0.01)
 			var color := _stone_tint(y)
 			# Pierre légèrement plus petite que sa place : le joint sombre apparaît.
-			_box(center, Vector3(t1 - t0 - 0.04, h - 0.04, WALL_T * _rng.randf_range(0.98, 1.02)), wall_basis * jitter, true, color)
-			_box(center, Vector3(t1 - t0, h, WALL_T * 0.97), wall_basis, false, mortar_color)
+			_box(center, Vector3(t1 - t0 - 0.04, h - 0.04, WALL_T * _rng.randf_range(0.98, 1.02)), wall_basis * jitter, false, color)
+			# Le bloc de mortier, plein, porte la collision : pas de joint vide
+			# entre deux pierres (un rayon de vue y passerait).
+			_box(center, Vector3(t1 - t0, h, WALL_T * 0.97), wall_basis, true, mortar_color)
 		y += h
 		course += 1
 

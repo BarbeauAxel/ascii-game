@@ -50,6 +50,9 @@ extends Node3D
 
 ## Calque de rendu réservé au personnage (bit 2).
 const CHARACTER_LAYER := 2
+## Calque « cellules fines » (bit 3), commun à tous les personnages : le
+## shader ASCII les dessine en petits caractères.
+const FINE_LAYER := 3
 
 var _body: CharacterBody3D
 
@@ -75,6 +78,17 @@ var _time := 0.0
 var _walk := 0.0        # 0 = arrêt, 1 = marche (lissé)
 var _run := 0.0         # 0 = marche, 1 = course (lissé)
 var _air := 0.0         # 0 = au sol, 1 = en l'air (lissé)
+
+# Combat
+const ATTACK_DURATION := 0.5
+const ATTACK_HIT_AT := 0.5     # fraction de ATTACK_DURATION où l'épée frappe
+var _attack_t := -1.0          # progression de l'attaque (0..1), -1 = aucune
+var _blocking := false
+var _block := 0.0
+var _flash := 0.0
+var _down := 0.0
+var _down_target := 0.0
+var _all_materials: Array[StandardMaterial3D] = []
 var _cape_angle := 0.0
 var _cape_velocity := 0.0
 
@@ -189,7 +203,9 @@ func _process(delta: float) -> void:
 		var bend := 0.25 + r * w * 0.95 + maxf(0.0, arm) * 0.5 + 0.4 * _air
 		if i == 0:
 			bend += 0.55 # bouclier tenu devant le flanc
-		_elbow[i].rotation.x = bend
+		_elbow[i].rotation = Vector3(bend, 0.0, 0.0)
+
+	_animate_combat(delta)
 
 	# --- Cape et tabard (retard amorti) ---------------------------------------
 	var cape_target := -(0.06 + speed * 0.06 + absf(s) * 0.05 * w) - vertical * 0.04 + _spine.rotation.x
@@ -335,6 +351,69 @@ func _light(light_name: String, color: Color, energy: float, light_range: float)
 	return light
 
 
+# --- Combat -----------------------------------------------------------------------------
+
+## Coup d'épée de haut en bas (durée ATTACK_DURATION). L'impact a lieu à
+## ATTACK_HIT_AT (fraction de la durée) : player.gd s'y cale.
+func play_attack() -> void:
+	_attack_t = 0.0
+
+
+## Parade : bouclier levé devant le buste.
+func set_blocking(on: bool) -> void:
+	_blocking = on
+
+
+## Éclat rouge bref (coup reçu).
+func flash() -> void:
+	_flash = 1.0
+
+
+## À terre (mort) ou debout.
+func set_down(on: bool) -> void:
+	_down_target = 1.0 if on else 0.0
+
+
+func _animate_combat(delta: float) -> void:
+	# Parade : bras gauche avancé, avant-bras en travers du buste. La rotation
+	# en Y du coude fait pivoter l'avant-bras autour de l'humérus : la face
+	# extérieure (le bouclier) passe de « vers la gauche » à « vers l'avant ».
+	_block = move_toward(_block, 1.0 if _blocking else 0.0, delta * 8.0)
+	if _block > 0.0:
+		var b := smoothstep(0.0, 1.0, _block)
+		_shoulder[0].rotation = _shoulder[0].rotation.lerp(Vector3(0.55, 0.0, 0.1), b)
+		_elbow[0].rotation = _elbow[0].rotation.lerp(Vector3(1.5, -1.35, 0.0), b)
+		_spine.rotation.y += 0.15 * b
+
+	# Attaque : armé au-dessus de l'épaule, puis coup vers l'avant et le bas,
+	# avec torsion du buste.
+	if _attack_t >= 0.0:
+		_attack_t += delta / ATTACK_DURATION
+		var t := _attack_t
+		var raise := smoothstep(0.0, 0.38, t)
+		var strike := smoothstep(0.38, ATTACK_HIT_AT, t)
+		var weight := 1.0 - smoothstep(0.7, 1.0, t)
+		var sx := lerpf(lerpf(0.1, 2.6, raise), -0.35, strike)
+		_shoulder[1].rotation.x = lerpf(_shoulder[1].rotation.x, sx, weight)
+		_shoulder[1].rotation.z = lerpf(_shoulder[1].rotation.z, 0.35 * raise * (1.0 - strike), weight)
+		_elbow[1].rotation.x = lerpf(_elbow[1].rotation.x, lerpf(1.1, 0.1, strike), weight)
+		_spine.rotation.y += (0.35 * raise - 0.55 * strike) * weight
+		_spine.rotation.x += (0.1 * raise - 0.25 * strike) * weight
+		if t >= 1.0:
+			_attack_t = -1.0
+
+	# Coup reçu : éclat rouge sur toutes les pièces.
+	_flash = move_toward(_flash, 0.0, delta * 5.0)
+	for m in _all_materials:
+		m.emission_energy_multiplier = _flash * 1.2
+
+	# À terre : basculé sur le dos.
+	_down = move_toward(_down, _down_target, delta * (2.5 if _down_target > 0.5 else 1.5))
+	var d := smoothstep(0.0, 1.0, _down)
+	rotation.x = PI * 0.47 * d
+	position.y = 0.18 * d
+
+
 func _make_materials() -> void:
 	# Métal à moitié seulement : un métal pur ne renvoie que l'environnement
 	# (le ciel nocturne, noir) et perdrait toute lecture en glyphes.
@@ -348,6 +427,12 @@ func _make_materials() -> void:
 	_m_cape = _mat(tabard_color.darkened(0.15), 0.0, 0.9, 0.5)
 	_m_shield = _mat(shield_color, 0.0, 0.7, 0.3)
 	_m_slit = _mat(Color(0.02, 0.02, 0.02), 0.0, 1.0)
+	# Émission rouge, éteinte, utilisée pour l'éclat des coups reçus.
+	_all_materials = [_m_steel, _m_dark_steel, _m_mail, _m_leather, _m_cloth, _m_trousers, _m_tabard, _m_cape, _m_shield]
+	for m in _all_materials:
+		m.emission_enabled = true
+		m.emission = Color(1.0, 0.15, 0.1)
+		m.emission_energy_multiplier = 0.0
 
 
 ## `rim` : liseré de lumière sur les bords (aide la silhouette à se détacher du décor).
@@ -383,7 +468,7 @@ func _mesh(parent: Node3D, mesh: Mesh, material: Material, pos: Vector3, rot := 
 	instance.rotation = rot
 	instance.scale = scl
 	# Calque 1 (monde) + calque du personnage (éclairé par ses propres lumières).
-	instance.layers = 1 | (1 << (CHARACTER_LAYER - 1))
+	instance.layers = 1 | (1 << (CHARACTER_LAYER - 1)) | (1 << (FINE_LAYER - 1))
 	parent.add_child(instance)
 	return instance
 

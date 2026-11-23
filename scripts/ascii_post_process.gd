@@ -41,13 +41,18 @@ const CELL_SIZES: Array[int] = [4, 5, 6, 7, 8, 10]
 ## des pixels nets. 0 = traiter la police comme une police vectorielle classique.
 @export var font_pixel_size: int = 8
 
-@export_group("Joueur en cellules fines (F5)")
-## Personnage dessiné en cellules plus petites que le décor (plus de détail).
-@export var fine_target_path: NodePath
+@export_group("Personnages en cellules fines (F5)")
 ## Taille des cellules fines (pixels). Ignorée si >= cell_size.
 @export var fine_cell_size: int = 3
-## Calques de rendu du personnage (voir soldier.gd, CHARACTER_LAYER).
-@export_flags_3d_render var character_layers: int = 2
+## Calque de rendu « fin » : tout maillage placé sur ce calque est dessiné en
+## cellules fines (soldat, squelettes…). Voir FINE_LAYER dans soldier.gd.
+@export_flags_3d_render var character_layers: int = 4
+## Groupe des personnages (nœud au niveau des pieds) : sert au test de
+## profondeur qui empêche un mur placé devant de passer en cellules fines.
+@export var character_group := &"characters"
+
+## Nombre max de personnages suivis (tableau du shader).
+const MAX_CHARACTERS := 16
 
 var ascii_enabled := true
 var fine_enabled := true
@@ -65,8 +70,7 @@ var _font: Font
 var _font_smooth: Font
 var _is_pixel_font := false
 var _build_id := 0
-# Passe « joueur fin » : caméra jumelle qui ne voit que le personnage.
-var _fine_target: Node3D
+# Passe « personnages fins » : caméra jumelle qui ne voit que les personnages.
 var _mask_viewport: SubViewport
 var _mask_camera: Camera3D
 var _fine_ready := false
@@ -95,16 +99,14 @@ func _ready() -> void:
 	_material.set_shader_parameter("dir_glyphs", Vector4i(
 		glyph_set.find("|"), glyph_set.find("/"), glyph_set.find("-"), glyph_set.find("\\")))
 
-	_fine_target = get_node_or_null(fine_target_path) as Node3D
-	if _fine_target:
-		_setup_fine_pass()
+	_setup_fine_pass()
 
 	await _rebuild_atlas()
 	visible = ascii_enabled
 
 
 func _process(_delta: float) -> void:
-	if not (fine_enabled and _fine_ready and _fine_target and _mask_viewport):
+	if not (fine_enabled and _fine_ready and _mask_viewport):
 		return
 	var cam := get_viewport().get_camera_3d()
 	if cam == null:
@@ -119,19 +121,28 @@ func _process(_delta: float) -> void:
 	_mask_camera.fov = cam.fov
 	_mask_camera.near = cam.near
 	_mask_camera.far = cam.far
-	# Intervalle de profondeur occupé par le personnage (boîte englobante
-	# généreuse : cape et épée comprises), en distance le long de la vue.
+	# Intervalle de profondeur de chaque personnage (boîte englobante
+	# généreuse : cape et armes comprises), en distance le long de la vue.
 	var inv := cam.global_transform.affine_inverse()
-	var base := _fine_target.global_position
-	var dmin := INF
-	var dmax := -INF
-	for x: float in [-0.8, 0.8]:
-		for y: float in [0.0, 2.1]:
-			for z: float in [-0.8, 0.8]:
-				var d := -(inv * (base + Vector3(x, y, z))).z
-				dmin = minf(dmin, d)
-				dmax = maxf(dmax, d)
-	_material.set_shader_parameter("player_depth_range", Vector2(dmin, dmax))
+	var ranges := PackedVector2Array()
+	for node in get_tree().get_nodes_in_group(character_group):
+		var character := node as Node3D
+		if character == null or ranges.size() >= MAX_CHARACTERS:
+			continue
+		var base := character.global_position
+		var dmin := INF
+		var dmax := -INF
+		for x: float in [-0.9, 0.9]:
+			for y: float in [0.0, 2.1]:
+				for z: float in [-0.9, 0.9]:
+					var d := -(inv * (base + Vector3(x, y, z))).z
+					dmin = minf(dmin, d)
+					dmax = maxf(dmax, d)
+		ranges.append(Vector2(dmin, dmax))
+	var count := ranges.size()
+	ranges.resize(MAX_CHARACTERS)
+	_material.set_shader_parameter("character_depth_ranges", ranges)
+	_material.set_shader_parameter("character_count", count)
 
 
 # --- API de debug -----------------------------------------------------------

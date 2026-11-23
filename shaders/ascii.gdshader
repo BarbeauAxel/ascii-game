@@ -38,16 +38,17 @@ uniform ivec4 dir_glyphs;         // index des glyphes | / - \
 
 uniform int cell_size : hint_range(2, 32) = 5;
 
-// --- Joueur en cellules fines (F5) ---
-// Masque : image d'une seconde caméra qui ne voit que le personnage (alpha = 1
-// sur sa silhouette). Un pixel du masque n'est retenu que si la profondeur de
-// la scène y tombe dans l'intervalle de profondeur du personnage : un mur
-// placé devant lui reste en cellules normales.
+// --- Personnages en cellules fines (F5) ---
+// Masque : image d'une seconde caméra qui ne voit que les personnages (alpha
+// = 1 sur leurs silhouettes). Un pixel du masque n'est retenu que si la
+// profondeur de la scène y tombe dans l'intervalle de profondeur d'un des
+// personnages : un mur placé devant eux reste en cellules normales.
 uniform bool fine_enabled = false;
 uniform int fine_cell_size : hint_range(2, 32) = 3;
 uniform sampler2D fine_glyph_atlas : filter_nearest, repeat_disable;
 uniform sampler2D player_mask : filter_nearest, repeat_disable;
-uniform vec2 player_depth_range = vec2(0.0, 0.0);
+uniform vec2 character_depth_ranges[16];
+uniform int character_count = 0;
 
 group_uniforms tonemapping;
 // Courbe appliquée à la luminance linéaire de la scène AVANT le choix du glyphe :
@@ -178,9 +179,13 @@ void fragment() {
 			vec2 fuv = (floor(FRAGCOORD.xy / fcs) * fcs + 0.5 * fcs) * texel;
 			if (texture(player_mask, fuv).a > 0.5) {
 				float fd = linear_depth(fuv, INV_PROJECTION_MATRIX);
-				if (fd > player_depth_range.x - 0.15 && fd < player_depth_range.y + 0.15) {
-					fine = true;
-					cs = fcs;
+				for (int i = 0; i < character_count; i++) {
+					vec2 range = character_depth_ranges[i];
+					if (fd > range.x - 0.15 && fd < range.y + 0.15) {
+						fine = true;
+						cs = fcs;
+						break;
+					}
 				}
 			}
 		}

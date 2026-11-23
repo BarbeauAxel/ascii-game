@@ -17,6 +17,8 @@ extends Node3D
 @onready var rain: Node = $Rain  # rain.gd
 @onready var player: Node3D = $Player
 @onready var player_name: Label = $HUD/PlayerName
+@onready var health_back: ColorRect = $HUD/HealthBack
+@onready var health_fill: ColorRect = $HUD/HealthBack/HealthFill
 
 ## Hauteur du nom au-dessus des pieds du personnage (mètres).
 const NAME_HEIGHT := 2.25
@@ -26,6 +28,7 @@ var _fps_timer := 0.0
 
 func _ready() -> void:
 	post.settings_changed.connect(_update_hud)
+	player.health_changed.connect(_on_health_changed)
 	_update_hud()
 
 	# Arguments de debug après "--" (ex : godot --path . -- --no-ascii --no-edges)
@@ -76,6 +79,13 @@ func _place_name() -> void:
 	player_name.visible = not cam.is_position_behind(head)
 	var screen := cam.unproject_position(head)
 	player_name.position = (screen - player_name.size * 0.5).round()
+	# Barre de vie juste sous le nom.
+	health_back.visible = player_name.visible
+	health_back.position = (screen + Vector2(-health_back.size.x * 0.5, player_name.size.y * 0.5 + 2.0)).round()
+
+
+func _on_health_changed(health: float, max_health: float) -> void:
+	health_fill.size.x = (health_back.size.x - 2.0) * clampf(health / max_health, 0.0, 1.0)
 
 
 func _hold_action(action: StringName) -> void:
@@ -125,7 +135,7 @@ func _unhandled_input(event: InputEvent) -> void:
 
 func _update_hud() -> void:
 	var on_off := func(value: bool) -> String: return "ON" if value else "OFF"
-	hud.text = "F1 ASCII : %s   F2 contours/traits : %s   F3 pluie : %s   F5 joueur fin : %s   F7 forme : %s   F4 FPS   F6 HUD   F11 plein écran\n+/- cellule : %d px   Molette zoom   Maj courir   Échap quitter   Police : %s   Rampe : %s" % [
+	hud.text = "F1 ASCII : %s   F2 contours/traits : %s   F3 pluie : %s   F5 joueur fin : %s   F7 forme : %s   F4 FPS   F6 HUD   F11 plein écran\n+/- cellule : %d px   Molette zoom   Maj courir   Clic G / J attaquer   Clic D / K parer   Échap quitter   Police : %s   Rampe : %s" % [
 		on_off.call(post.ascii_enabled),
 		on_off.call(post.edges_enabled),
 		on_off.call(rain.active),

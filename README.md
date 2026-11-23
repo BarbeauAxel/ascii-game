@@ -22,11 +22,13 @@ cimetière. Tout le décor est construit en code, sans asset importé.
 | ZQSD / WASD / flèches      | Se déplacer (Z = vers le haut de l'écran) |
 | Maj (maintenue)            | Courir                                  |
 | Espace                     | Sauter                                  |
+| Clic gauche / J            | Attaquer (coup d'épée)                  |
+| Clic droit / K (maintenu)  | Parer (bouclier)                        |
 | Molette                    | Zoom par paliers                        |
 | F1                         | Effet ASCII on/off (comparer au rendu brut) |
 | F2                         | Contours et traits orientés on/off      |
 | F3                         | Pluie on/off                            |
-| F5                         | Personnage en cellules fines on/off     |
+| F5                         | Personnages en cellules fines on/off    |
 | F4                         | Compteur de FPS                         |
 | F6                         | Afficher/masquer le HUD                 |
 | F7                         | Correspondance de forme on/off (sinon rampe de densité seule) |
@@ -55,7 +57,8 @@ avec `--write-movie` pour capturer des comparaisons.
 | `--print-glyphs`       | affiche dans la console la densité / dispersion / asymétrie mesurées de chaque glyphe |
 | `--hold=<action>`      | maintient une action (ex : `--hold=move_forward`), pour tester les déplacements sans clavier |
 | `--rain`               | démarre sous la pluie |
-| `--no-fine`           | démarre sans les cellules fines du personnage |
+| `--no-fine`           | démarre sans les cellules fines des personnages |
+| `--no-enemies`        | démarre sans squelettes |
 
 Mesurer les performances : `godot --path . --resolution 1920x1080 --disable-vsync --print-fps`.
 
@@ -98,6 +101,8 @@ scripts/world/flicker_light.gd   lumière de flamme vacillante
 shaders/grass.gdshader brins d'herbe : dégradé, vent
 shaders/water.gdshader mare : vagues, paillettes de lune, ronds de pluie
 scripts/world/rain.gd  pluie (F3) : gouttes, éclaboussures, brouillard
+scripts/enemies/skeleton.gd  squelette : construction, animation, comportement
+scripts/enemies/enemy_spawner.gd  placement des squelettes
 scripts/camera_follow.gd   caméra isométrique orthographique, calage, zoom
 scripts/ascii_post_process.gd  pilote du quad : police, atlas, analyse, réglages
 scripts/glyph_atlas.gd rendu et analyse de l'atlas de glyphes
@@ -137,20 +142,61 @@ est aussi exécuté dans l'éditeur, on le voit donc dans la scène).
   (`rim`) pour se détacher du fond.
 - **Métal à moitié** (`metallic` ≈ 0,45) pour la même raison.
 - Couleurs et intensités réglables dans l'inspecteur (`Player/Visual/Soldier`).
-- **Cellules fines (F5)** : le soldat est dessiné en cellules de 3 px, le
-  décor en 5 px, d'où beaucoup plus de détail sur lui. Une caméra jumelle,
-  dans un SubViewport qui suit exactement la caméra principale, ne voit que le
-  calque du personnage (calque 2) : son alpha sert de masque au shader ASCII.
-  Un pixel du masque n'est retenu que si la profondeur de la scène y tombe
-  dans l'intervalle de profondeur du soldat, si bien qu'un mur devant lui
-  reste en cellules normales. Les cellules fines ont leur propre atlas, rendu
-  à leur taille ; descripteurs de forme et rampe sont partagés. Coût : environ
-  0,2 ms en 1080p. Réglages : `fine_cell_size` et `fine_target_path` sur
-  `Camera3D/AsciiPostProcess`.
+- **Cellules fines (F5)** : tous les personnages (soldat, squelettes) sont
+  dessinés en cellules de 3 px, le décor en 5 px, d'où beaucoup plus de
+  détail sur eux.
+  - **Masque** : une caméra jumelle, dans un SubViewport qui suit exactement
+    la caméra principale, ne voit que le calque « fin » (calque 3,
+    `FINE_LAYER`). Son alpha sert de masque au shader ASCII. Tout nouveau
+    personnage n'a qu'à placer ses maillages sur ce calque et à rejoindre le
+    groupe `characters`.
+  - **Occultation** : un pixel du masque n'est retenu que si la profondeur
+    de la scène y tombe dans l'intervalle de profondeur d'un personnage (16
+    au plus). Un mur placé devant reste en cellules normales.
+  - **Atlas** : les cellules fines ont leur propre atlas, rendu à leur
+    taille ; descripteurs de forme et rampe sont partagés.
+  - **Coût et réglages** : environ 0,2 ms en 1080p. Réglages : `fine_cell_size`
+    et `character_layers` sur `Camera3D/AsciiPostProcess`.
+  - **Lumières du soldat** : elles restent sur le calque 2 et n'éclairent que
+    lui.
 - **Nom flottant** : un `Label` du HUD en police pixel, placé chaque image
   au-dessus de la tête (`main.gd`, `NAME_HEIGHT`). Il reste net, au-dessus de
   l'ASCII, au lieu d'être converti en glyphes illisibles. Le texte se change
   dans `HUD/PlayerName`.
+
+## Combat et squelettes
+
+- **Soldat** (`player.gd`) : 100 PV.
+  - **Attaque** (clic gauche ou J) : coup d'épée armé au-dessus de l'épaule,
+    puis porté vers l'avant. L'impact tombe à mi-animation et touche les
+    ennemis dans un arc frontal (`attack_reach` 1,9 m, 12 dégâts).
+  - **Parade** (clic droit ou K, maintenu) : le bouclier passe devant le buste.
+    Un coup reçu de face n'inflige que 15 % des dégâts, et l'on avance au
+    ralenti sans se retourner.
+  - **Coup reçu** : éclat rouge et recul. À 0 PV, le soldat bascule sur le
+    dos, puis réapparaît au point de départ au bout de 3 s.
+  - **Barre de vie** sous le nom, dans le HUD.
+- **Squelettes** (`scripts/enemies/skeleton.gd`) : construits en code comme le
+  soldat (crâne, mâchoire, cage thoracique en anneaux, vertèbres, os longs,
+  haillons, épée rouillée), animés de façon procédurale avec une démarche
+  raide et saccadée. 30 PV, soit 3 coups d'épée.
+  - **Comportement** : errance autour de leur poste, poursuite dès que le
+    joueur est à 9 m (la mâchoire claque), attaque armée au-dessus de la
+    tête (0,55 s pour parer ou reculer), chancellement et léger recul quand
+    ils sont touchés.
+  - **Mort** : effondrés en tas d'os, les yeux s'éteignent. Ils se relèvent
+    lentement au bout de 12 s.
+  - **Lisibilité** : os exagérés (2 à 3 fois l'épaisseur réelle) et légère
+    lueur pâle. À 5 px par cellule, des os réalistes disparaîtraient.
+  - **Ligne de vue** : un rayon physique vérifie qu'aucun mur, pilier ou
+    rocher ne les sépare du joueur, à trois moments : pour le repérer (à
+    1,3 m, il peut voir par une fenêtre), pour lancer une attaque et au moment
+    de l'impact (à 1 m). Quand ils le perdent de vue, ils vont voir là où ils
+    l'ont aperçu pour la dernière fois, puis rentrent à leur poste au bout de
+    2,5 s.
+  - **Déplacements** : contournement simple des murs, sans navmesh.
+- **Postes** (`enemy_spawner.gd`) : deux dans la nef, deux au cimetière, un
+  près de la mare.
 
 ## Le décor (`scripts/world/`)
 
@@ -331,6 +377,7 @@ large (toute l'herbe à l'écran, pire cas) :
 | Rendu 3D brut (F1) | ~155–210 | 4.7–6.5 |
 | ASCII complet | ~153 | 6.5 |
 | ASCII + pluie (F3) | ~140–155 | 6.4–7.2 |
+| ASCII + 5 squelettes | ~145 | 6.9 |
 
 Avec l'ancienne salle de test, sans décor : 640 FPS en rendu brut et 365 en
 ASCII.

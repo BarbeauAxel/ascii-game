@@ -10,6 +10,7 @@
 [ext_resource type="Script" path="res://scripts/world/flicker_light.gd" id="8_flicker"]
 [ext_resource type="Script" path="res://scripts/world/rain.gd" id="9_rain"]
 [ext_resource type="FontFile" path="res://fonts/PressStart2P-Regular.ttf" id="10_font"]
+[ext_resource type="Script" path="res://scripts/enemies/enemy_spawner.gd" id="11_enemies"]
 
 [sub_resource type="Environment" id="Env_night"]
 background_mode = 1
@@ -102,6 +103,9 @@ flicker = 0.18
 [node name="Player" parent="." instance=ExtResource("2_player")]
 position = Vector3(0, 0.1, 5)
 
+[node name="Enemies" type="Node3D" parent="."]
+script = ExtResource("11_enemies")
+
 [node name="Rain" type="Node3D" parent="."]
 script = ExtResource("9_rain")
 target_path = NodePath("../Player")
@@ -124,7 +128,6 @@ mesh = SubResource("Mesh_fullscreen")
 material_override = SubResource("Mat_ascii")
 cast_shadow = 0
 script = ExtResource("4_ascii")
-fine_target_path = NodePath("../../Player")
 
 [node name="HUD" type="CanvasLayer" parent="."]
 
@@ -149,6 +152,18 @@ theme_override_fonts/font = ExtResource("10_font")
 theme_override_font_sizes/font_size = 8
 horizontal_alignment = 1
 text = "Aldren"
+
+[node name="HealthBack" type="ColorRect" parent="HUD"]
+offset_right = 48.0
+offset_bottom = 5.0
+color = Color(0, 0, 0, 0.85)
+
+[node name="HealthFill" type="ColorRect" parent="HUD/HealthBack"]
+offset_left = 1.0
+offset_top = 1.0
+offset_right = 47.0
+offset_bottom = 4.0
+color = Color(0.78, 0.16, 0.12, 1)
 
 [node name="FpsLabel" type="Label" parent="HUD"]
 visible = false
