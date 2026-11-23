@@ -3,7 +3,7 @@
 Une vraie scène 3D (Forward+) convertie à l'écran en glyphes ASCII colorés par
 un shader de post-traitement. Un personnage (chapeau large, épée rose) se
 déplace dans une petite salle éclairée par la lune, une lanterne orange et un
-cristal cyan.
+cristal cyan, vue d'en haut en isométrique façon MMO RPG.
 
 ## Lancer
 
@@ -17,7 +17,8 @@ cristal cyan.
 
 | Touche                     | Action                                  |
 |----------------------------|-----------------------------------------|
-| ZQSD / WASD / flèches      | Se déplacer                             |
+| ZQSD / WASD / flèches      | Se déplacer (Z = vers le haut de l'écran) |
+| Molette                    | Zoomer / dézoomer                       |
 | Espace                     | Sauter                                  |
 | F1                         | Effet ASCII on/off (comparer au rendu brut) |
 | F2                         | Contours on/off                         |
@@ -39,11 +40,33 @@ des comparaisons :
 | `--debug-ids`          | affiche les identifiants de surface en couleurs unies |
 | `--debug-view=2`       | affiche la roughness en niveaux de gris (valeur = pixel / 255) |
 | `--save-atlas`         | enregistre les atlas de glyphes en PNG dans `user://` |
+| `--hold=<action>`      | maintient une action (ex : `--hold=move_forward`), pour tester les déplacements sans clavier |
 
 Exemple : `godot --path . -- --debug-ids`
 
 Les déplacements utilisent les touches *physiques* : ZQSD sur AZERTY et WASD sur
 QWERTY correspondent aux mêmes touches.
+
+## Caméra isométrique (`scripts/camera_follow.gd`)
+
+Vue fixe en hauteur, façon MMO RPG :
+
+- **Angle fixe** : `yaw_degrees = 45` (vue diagonale) et `pitch_degrees = 50`
+  (plongée). Ils ne changent jamais. Seul le point visé suit le joueur (avec
+  lissage `follow_smoothing`), et la position de la caméra est recalculée à
+  partir de l'angle et de la distance.
+- **Zoom à la molette** entre `min_distance` (8) et `max_distance` (28), par
+  pas de `zoom_step`, avec lissage.
+- **Focale réduite** (FOV 40°) pour aplatir la perspective et se rapprocher
+  d'un rendu isométrique.
+- **Déplacements relatifs à la caméra** (`player.gd`) : les axes de la caméra
+  sont projetés au sol, donc Z va vers le haut de l'écran, quelle que soit
+  l'orientation choisie.
+- **Murs est et sud abaissés** (1 m), côté caméra, pour qu'ils ne masquent
+  jamais le joueur. C'est une convention classique des jeux isométriques.
+
+Pour une isométrique « vraie » (style Dofus), mettez `pitch_degrees` à environ
+35. Pour une vue plus plongeante, montez-le vers 60–70.
 
 ## Structure
 

@@ -26,10 +26,11 @@ func _physics_process(delta: float) -> void:
 	elif Input.is_action_just_pressed("jump"):
 		velocity.y = jump_velocity
 
-	# Direction voulue dans le plan XZ. La caméra regarde vers -Z, donc
-	# "avant" = -Z dans le monde.
+	# Direction voulue, relative à la caméra : "avant" = vers le haut de
+	# l'écran. Avec la vue isométrique (caméra tournée à 45°), c'est donc
+	# une diagonale dans le monde.
 	var input := Input.get_vector("move_left", "move_right", "move_forward", "move_back")
-	var direction := Vector3(input.x, 0.0, input.y)
+	var direction := _camera_relative(input)
 
 	var target := direction * speed
 	var blend := 1.0 - exp(-acceleration * delta)
@@ -42,6 +43,20 @@ func _physics_process(delta: float) -> void:
 	if direction.length_squared() > 0.01:
 		var yaw := atan2(-direction.x, -direction.z)
 		visual.rotation.y = lerp_angle(visual.rotation.y, yaw, 1.0 - exp(-turn_speed * delta))
+
+
+## Convertit l'entrée 2D (x = droite, y = bas) en direction dans le plan XZ,
+## selon les axes de la caméra projetés au sol.
+func _camera_relative(input: Vector2) -> Vector3:
+	var camera := get_viewport().get_camera_3d()
+	if camera == null:
+		return Vector3(input.x, 0.0, input.y)
+	var right := camera.global_basis.x
+	var back := camera.global_basis.z # la caméra regarde vers -Z
+	right.y = 0.0
+	back.y = 0.0
+	var direction := right.normalized() * input.x + back.normalized() * input.y
+	return direction.limit_length(1.0)
 
 
 ## Crée les actions d'entrée si elles n'existent pas encore.

@@ -3,6 +3,7 @@ extends Node3D
 ##
 ## F1 : effet ASCII on/off       F2 : contours on/off
 ## F4 : glyphes par surface      F5 : cellules fines sur le personnage
+## Molette : zoom de la caméra (géré par camera_follow.gd)
 ## +/- : taille de cellule       F3 : HUD on/off      Échap : quitter
 
 @onready var post: AsciiPostProcess = $Camera3D/AsciiPostProcess
@@ -26,8 +27,18 @@ func _ready() -> void:
 	for arg in args:
 		if arg.begins_with("--debug-view="):
 			post.set_debug_view(arg.trim_prefix("--debug-view=").to_int())
+		elif arg.begins_with("--hold="):
+			# Simule une touche maintenue (tests automatisés), ex : --hold=move_forward
+			_hold_action.call_deferred(StringName(arg.trim_prefix("--hold=")))
 	if "--no-ascii" in args:
 		post.toggle_enabled()
+
+
+func _hold_action(action: StringName) -> void:
+	if InputMap.has_action(action):
+		Input.action_press(action)
+	else:
+		push_warning("--hold : action inconnue '%s'" % action)
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -61,7 +72,7 @@ func _unhandled_input(event: InputEvent) -> void:
 
 func _update_hud() -> void:
 	var on_off := func(value: bool) -> String: return "ON" if value else "OFF"
-	hud.text = "F1 ASCII : %s   F2 contours : %s   F4 glyphes/surface : %s   F5 joueur fin : %s\n+/- cellule : %d px (joueur %d px)   F3 HUD   Échap quitter   Police : %s" % [
+	hud.text = "F1 ASCII : %s   F2 contours : %s   F4 glyphes/surface : %s   F5 joueur fin : %s\n+/- cellule : %d px (joueur %d px)   Molette zoom   F3 HUD   Échap quitter   Police : %s" % [
 		on_off.call(post.ascii_enabled),
 		on_off.call(post.edges_enabled),
 		on_off.call(post.surface_glyphs_enabled),

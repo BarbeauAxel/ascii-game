@@ -90,10 +90,10 @@ use_collision = true
 size = Vector3(1, 4, 30)
 material = SubResource("Mat_wall")
 
-[node name="WallEast" type="CSGBox3D" parent="Level"]
-position = Vector3(15, 2, 0)
+[node name="WallEastLow" type="CSGBox3D" parent="Level"]
+position = Vector3(15, 0.5, 0)
 use_collision = true
-size = Vector3(1, 4, 30)
+size = Vector3(1, 1, 30)
 material = SubResource("Mat_wall")
 
 [node name="WallSouthLow" type="CSGBox3D" parent="Level"]
@@ -200,9 +200,9 @@ omni_range = 7.0
 position = Vector3(0, 0.1, 4)
 
 [node name="Camera3D" type="Camera3D" parent="."]
-position = Vector3(0, 6, 12)
+position = Vector3(10, 13, 14)
 current = true
-fov = 60.0
+fov = 40.0
 far = 200.0
 script = ExtResource("3_camera")
 target_path = NodePath("../Player")
