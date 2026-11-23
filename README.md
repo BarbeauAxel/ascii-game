@@ -30,13 +30,13 @@ cimetière. Tout le décor est construit en code, sans asset importé.
 | F3                         | Pluie on/off                            |
 | F5                         | Personnages en cellules fines on/off    |
 | F4                         | Compteur de FPS                         |
-| F6                         | Afficher/masquer le HUD                 |
+| F6                         | Afficher/masquer le HUD de debug (masqué par défaut) |
 | F7                         | Correspondance de forme on/off (sinon rampe de densité seule) |
 | F11                        | Plein écran                             |
 | `+` / `-` (ou pavé num.)   | Taille de cellule : 4, 5, 6, 7, 8, 10 px |
 | R                          | Recommencer la partie                   |
 | Curseur en bas à gauche    | Volume général (0 % par défaut, mémorisé) |
-| Échap                      | Quitter                                 |
+| Échap                      | Pause (Reprendre / Recommencer / Quitter) |
 
 Les déplacements utilisent les touches *physiques* : ZQSD sur AZERTY et WASD sur
 QWERTY correspondent aux mêmes touches.
@@ -61,6 +61,7 @@ avec `--write-movie` pour capturer des comparaisons.
 | `--rain`               | démarre sous la pluie |
 | `--no-fine`           | démarre sans les cellules fines des personnages |
 | `--no-enemies`        | démarre sans squelettes |
+| `--no-title`          | saute l'écran titre (aussi sauté avec `--hold=`) |
 
 Mesurer les performances : `godot --path . --resolution 1920x1080 --disable-vsync --print-fps`.
 
@@ -107,6 +108,7 @@ scripts/enemies/skeleton.gd  squelette : construction, animation, comportement
 scripts/enemies/enemy_spawner.gd  placement des squelettes
 scripts/fx/hit_fx.gd   éclats, étincelles, poussière (particules ponctuelles)
 scripts/audio/sfx.gd   sons synthétisés en code (autoload « Sfx »)
+scripts/ui/menus.gd    écran titre et menu pause
 scripts/camera_follow.gd   caméra isométrique orthographique, calage, zoom
 scripts/ascii_post_process.gd  pilote du quad : police, atlas, analyse, réglages
 scripts/glyph_atlas.gd rendu et analyse de l'atlas de glyphes
@@ -167,6 +169,19 @@ est aussi exécuté dans l'éditeur, on le voit donc dans la scène).
   au-dessus de la tête (`main.gd`, `NAME_HEIGHT`). Il reste net, au-dessus de
   l'ASCII, au lieu d'être converti en glyphes illisibles. Le texte se change
   dans `HUD/PlayerName`.
+
+## Écran titre et pause (`scripts/ui/menus.gd`)
+
+- **Titre** : au lancement, « OSSUAIRE » (nom provisoire, `game_title`),
+  les commandes et l'objectif s'affichent devant le décor assombri. Le jeu est
+  en pause derrière, mais l'herbe ondule, les cierges vacillent et l'ambiance
+  sonore joue : shaders et son ne dépendent pas de la pause. Entrée, Espace
+  ou clic pour commencer. Le titre n'est montré qu'une fois par session :
+  « Recommencer » et R relancent directement la partie.
+- **Pause** : Échap ouvre Reprendre / Recommencer / Quitter, au clavier
+  (flèches + Entrée) ou à la souris. Échap referme le menu.
+- **HUD de debug** (états F1…F11, police, rampe) : masqué par défaut, F6
+  l'affiche.
 
 ## Objectif : vaincre les squelettes
 

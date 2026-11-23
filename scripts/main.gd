@@ -5,7 +5,7 @@ extends Node3D
 ## F3 : pluie on/off                 F4 : compteur de FPS              F6 : HUD on/off
 ## F7 : correspondance de forme on/off (sinon rampe de densité seule)
 ## F11 : plein écran                 +/- : taille de cellule
-## Molette : zoom (géré par camera_follow.gd)       Échap : quitter
+## Molette : zoom (géré par camera_follow.gd)       Échap : pause (ui/menus.gd)
 ## F5 : personnages en cellules fines on/off
 ## R : recommencer la partie
 ##
@@ -213,8 +213,6 @@ func _unhandled_input(event: InputEvent) -> void:
 		# Nouvelle partie (le temps de jeu peut être ralenti par une micro-pause).
 		Engine.time_scale = 1.0
 		get_tree().reload_current_scene()
-	elif key.keycode == KEY_ESCAPE:
-		get_tree().quit()
 	elif typed == "+" or key.keycode in [KEY_PLUS, KEY_KP_ADD, KEY_EQUAL]:
 		post.step_cell_size(1)
 	elif typed == "-" or key.keycode in [KEY_MINUS, KEY_KP_SUBTRACT]:
@@ -226,7 +224,7 @@ func _unhandled_input(event: InputEvent) -> void:
 
 func _update_hud() -> void:
 	var on_off := func(value: bool) -> String: return "ON" if value else "OFF"
-	hud.text = "F1 ASCII : %s   F2 contours/traits : %s   F3 pluie : %s   F5 joueur fin : %s   F7 forme : %s   F4 FPS   F6 HUD   F11 plein écran\n+/- cellule : %d px   Molette zoom   Maj courir   Clic G / J attaquer   Clic D / K parer   R recommencer   Échap quitter   Police : %s   Rampe : %s" % [
+	hud.text = "F1 ASCII : %s   F2 contours/traits : %s   F3 pluie : %s   F5 joueur fin : %s   F7 forme : %s   F4 FPS   F6 HUD   F11 plein écran\n+/- cellule : %d px   Molette zoom   Maj courir   Clic G / J attaquer   Clic D / K parer   R recommencer   Échap pause   Police : %s   Rampe : %s" % [
 		on_off.call(post.ascii_enabled),
 		on_off.call(post.edges_enabled),
 		on_off.call(rain.active),
