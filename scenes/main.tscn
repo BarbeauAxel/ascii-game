@@ -8,6 +8,7 @@
 [ext_resource type="Script" path="res://scripts/world/ruins.gd" id="6_ruins"]
 [ext_resource type="Script" path="res://scripts/world/nature.gd" id="7_nature"]
 [ext_resource type="Script" path="res://scripts/world/flicker_light.gd" id="8_flicker"]
+[ext_resource type="Script" path="res://scripts/world/rain.gd" id="9_rain"]
 
 [sub_resource type="Environment" id="Env_night"]
 background_mode = 1
@@ -99,6 +100,10 @@ flicker = 0.18
 
 [node name="Player" parent="." instance=ExtResource("2_player")]
 position = Vector3(0, 0.1, 5)
+
+[node name="Rain" type="Node3D" parent="."]
+script = ExtResource("9_rain")
+target_path = NodePath("../Player")
 
 [node name="Camera3D" type="Camera3D" parent="."]
 position = Vector3(10, 13, 14)

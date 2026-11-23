@@ -25,6 +25,7 @@ cimetière. Tout le décor est construit en code, sans asset importé.
 | Molette                    | Zoom par paliers                        |
 | F1                         | Effet ASCII on/off (comparer au rendu brut) |
 | F2                         | Contours et traits orientés on/off      |
+| F3                         | Pluie on/off                            |
 | F4                         | Compteur de FPS                         |
 | F6                         | Afficher/masquer le HUD                 |
 | F7                         | Correspondance de forme on/off (sinon rampe de densité seule) |
@@ -32,7 +33,7 @@ cimetière. Tout le décor est construit en code, sans asset importé.
 | `+` / `-` (ou pavé num.)   | Taille de cellule : 4, 5, 6, 7, 8, 10 px |
 | Échap                      | Quitter                                 |
 
-F3 (pluie) et F5 (personnage en cellules fines) arriveront aux étapes 2 et 3.
+F5 (personnage en cellules fines) arrivera à l'étape 3.
 
 Les déplacements utilisent les touches *physiques* : ZQSD sur AZERTY et WASD sur
 QWERTY correspondent aux mêmes touches.
@@ -54,6 +55,7 @@ avec `--write-movie` pour capturer des comparaisons.
 | `--save-atlas`         | enregistre l'atlas de glyphes en PNG dans `user://` |
 | `--print-glyphs`       | affiche dans la console la densité / dispersion / asymétrie mesurées de chaque glyphe |
 | `--hold=<action>`      | maintient une action (ex : `--hold=move_forward`), pour tester les déplacements sans clavier |
+| `--rain`               | démarre sous la pluie |
 
 Mesurer les performances : `godot --path . --resolution 1920x1080 --disable-vsync --print-fps`.
 
@@ -94,6 +96,8 @@ scripts/world/nature.gd    sol, herbe (MultiMesh), arbres morts, buissons
 scripts/world/stone_material.gd  matériau de pierre partagé (grain triplanaire)
 scripts/world/flicker_light.gd   lumière de flamme vacillante
 shaders/grass.gdshader brins d'herbe : dégradé, vent
+shaders/water.gdshader mare : vagues, paillettes de lune, ronds de pluie
+scripts/world/rain.gd  pluie (F3) : gouttes, éclaboussures, brouillard
 scripts/camera_follow.gd   caméra isométrique orthographique, calage, zoom
 scripts/ascii_post_process.gd  pilote du quad : police, atlas, analyse, réglages
 scripts/glyph_atlas.gd rendu et analyse de l'atlas de glyphes
@@ -155,6 +159,19 @@ scène.
   par arbre) ; buissons.
 - **Vent** (`grass.gdshader`) : rafales qui traversent la prairie et
   frémissement de chaque brin ; la base reste plantée.
+- **Mare** (`nature.gd` + `water.gdshader`) : eau opaque sombre, au contour
+  irrégulier, avec vagues et rides fines, berge de pierres et roseaux. La
+  lune n'est jamais dans le champ (vue plongeante) : son reflet est simulé
+  derrière la mare, un peu sous l'axe du reflet d'une eau plate. Seules les
+  facettes de vague bien inclinées la renvoient, d'où des paillettes qui
+  scintillent (`moon_elevation`, `glint_sharpness`). Pas de SSR : il ne
+  fonctionne pas en orthographique.
+- **Pluie** (F3, `rain.gd`) : environ 3 500 gouttes (GPUParticles3D), traits
+  verticaux courts et discrets, inclinés par le vent, et 2 000 éclaboussures au sol. La zone suit
+  le joueur. Sous l'averse, des ronds de gouttes apparaissent sur la mare et
+  le brouillard s'épaissit ; fondu de 1,5 s au début et à la fin. Les gouttes
+  sont opaques, car le shader ASCII ne lit que l'image opaque, et « souples » :
+  elles deviennent des `|` sans contours.
 - **Lumières** : lune froide (ombres), lanterne au portail et cierges de
   l'autel qui vacillent (`flicker_light.gd`).
 - **Ambiance** : brouillard au ras du sol et occlusion ambiante (SSAO).
@@ -299,6 +316,7 @@ large (toute l'herbe à l'écran, pire cas) :
 |------|-----|------------|
 | Rendu 3D brut (F1) | ~155–210 | 4.7–6.5 |
 | ASCII complet | ~153 | 6.5 |
+| ASCII + pluie (F3) | ~140–155 | 6.4–7.2 |
 
 Avec l'ancienne salle de test, sans décor : 640 FPS en rendu brut et 365 en
 ASCII.

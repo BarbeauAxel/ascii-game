@@ -2,15 +2,16 @@ extends Node3D
 ## Script racine : touches de debug, HUD et compteur de FPS.
 ##
 ## F1 : effet ASCII on/off           F2 : contours et traits orientés on/off
-## F4 : compteur de FPS              F6 : HUD on/off
+## F3 : pluie on/off                 F4 : compteur de FPS              F6 : HUD on/off
 ## F7 : correspondance de forme on/off (sinon rampe de densité seule)
 ## F11 : plein écran                 +/- : taille de cellule
 ## Molette : zoom (géré par camera_follow.gd)       Échap : quitter
-## (F3 : pluie et F5 : joueur fin arrivent aux étapes 2 et 3.)
+## (F5 : joueur en cellules fines arrive à l'étape 3.)
 
 @onready var post: AsciiPostProcess = $Camera3D/AsciiPostProcess
 @onready var hud: Label = $HUD/Label
 @onready var fps_label: Label = $HUD/FpsLabel
+@onready var rain: Node = $Rain  # rain.gd
 
 var _fps_timer := 0.0
 
@@ -74,6 +75,9 @@ func _unhandled_input(event: InputEvent) -> void:
 		post.toggle_enabled()
 	elif key.keycode == KEY_F2:
 		post.toggle_edges()
+	elif key.keycode == KEY_F3:
+		rain.toggle()
+		_update_hud()
 	elif key.keycode == KEY_F4:
 		fps_label.visible = not fps_label.visible
 		_fps_timer = 0.0
@@ -97,9 +101,10 @@ func _unhandled_input(event: InputEvent) -> void:
 
 func _update_hud() -> void:
 	var on_off := func(value: bool) -> String: return "ON" if value else "OFF"
-	hud.text = "F1 ASCII : %s   F2 contours/traits : %s   F7 forme : %s   F4 FPS   F6 HUD   F11 plein écran\n+/- cellule : %d px   Molette zoom   Échap quitter   Police : %s   Rampe : %s" % [
+	hud.text = "F1 ASCII : %s   F2 contours/traits : %s   F3 pluie : %s   F7 forme : %s   F4 FPS   F6 HUD   F11 plein écran\n+/- cellule : %d px   Molette zoom   Maj courir   Échap quitter   Police : %s   Rampe : %s" % [
 		on_off.call(post.ascii_enabled),
 		on_off.call(post.edges_enabled),
+		on_off.call(rain.active),
 		on_off.call(post.shape_matching_enabled),
 		post.cell_size,
 		post.get_font_name(),
