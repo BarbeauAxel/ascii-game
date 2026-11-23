@@ -1,8 +1,9 @@
 extends Node3D
 ## Script racine : touches de debug et petit HUD.
 ##
-## F1 : effet ASCII on/off   F2 : contours on/off   +/- : taille de cellule
-## F3 : HUD on/off           Échap : quitter
+## F1 : effet ASCII on/off       F2 : contours on/off
+## F4 : glyphes par surface      F5 : cellules fines sur le personnage
+## +/- : taille de cellule       F3 : HUD on/off      Échap : quitter
 
 @onready var post: AsciiPostProcess = $Camera3D/AsciiPostProcess
 @onready var hud: Label = $HUD/Label
@@ -16,6 +17,15 @@ func _ready() -> void:
 	var args := OS.get_cmdline_user_args()
 	if "--no-edges" in args:
 		post.toggle_edges()
+	if "--no-surface-glyphs" in args:
+		post.toggle_surface_glyphs()
+	if "--no-fine-player" in args:
+		post.toggle_fine_player()
+	if "--debug-ids" in args:
+		post.set_debug_view(1)
+	for arg in args:
+		if arg.begins_with("--debug-view="):
+			post.set_debug_view(arg.trim_prefix("--debug-view=").to_int())
 	if "--no-ascii" in args:
 		post.toggle_enabled()
 
@@ -34,6 +44,10 @@ func _unhandled_input(event: InputEvent) -> void:
 		post.toggle_edges()
 	elif key.keycode == KEY_F3:
 		hud.visible = not hud.visible
+	elif key.keycode == KEY_F4:
+		post.toggle_surface_glyphs()
+	elif key.keycode == KEY_F5:
+		post.toggle_fine_player()
 	elif key.keycode == KEY_ESCAPE:
 		get_tree().quit()
 	elif typed == "+" or key.keycode in [KEY_PLUS, KEY_KP_ADD, KEY_EQUAL]:
@@ -46,9 +60,13 @@ func _unhandled_input(event: InputEvent) -> void:
 
 
 func _update_hud() -> void:
-	hud.text = "F1 ASCII : %s   F2 contours : %s   +/- cellule : %d px   F3 HUD   Échap quitter\nPolice : %s" % [
-		"ON" if post.ascii_enabled else "OFF",
-		"ON" if post.edges_enabled else "OFF",
+	var on_off := func(value: bool) -> String: return "ON" if value else "OFF"
+	hud.text = "F1 ASCII : %s   F2 contours : %s   F4 glyphes/surface : %s   F5 joueur fin : %s\n+/- cellule : %d px (joueur %d px)   F3 HUD   Échap quitter   Police : %s" % [
+		on_off.call(post.ascii_enabled),
+		on_off.call(post.edges_enabled),
+		on_off.call(post.surface_glyphs_enabled),
+		on_off.call(post.fine_player_enabled),
 		post.cell_size,
+		post.get_fine_cell_size(),
 		post.get_font_name(),
 	]

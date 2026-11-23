@@ -4,36 +4,53 @@ extends MeshInstance3D
 ##
 ## - choisit une police (police du dossier fonts/, sinon police mono système,
 ##   sinon police par défaut de Godot) ;
-## - génère l'atlas de glyphes à la taille de cellule courante ;
-## - expose des méthodes de debug (activer/désactiver, contours, taille de cellule).
+## - génère deux atlas de glyphes : un à la taille de cellule du décor, un à la
+##   moitié pour le personnage ;
+## - décrit au shader les rampes de glyphes par type de surface ;
+## - expose des méthodes de debug (activer/désactiver, contours, taille de cellule…).
 ##
 ## Le quad est caché dans la scène (visible = false) pour ne pas masquer la vue
 ## de l'éditeur : il n'est affiché qu'une fois l'atlas prêt, au lancement.
 
 signal settings_changed
 
-## Rampe de luminance, du plus sombre au plus clair.
-const RAMP := " .:-=+*#%@"
-## Glyphes directionnels, dans l'ordre attendu par le shader.
+## Rampes de glyphes par type de surface (une ligne de l'atlas chacune).
+## Chaque rampe est une liste de « paliers » du plus sombre au plus clair. Un
+## palier peut contenir plusieurs variantes de même densité (ex : "<>") : le
+## shader en choisit une au hasard par cellule pour casser la répétition.
+## L'index dans ce tableau = identifiant de surface dans le shader :
+##   0 : défaut (et personnage)   1 : sol   2 : murs / piliers
+const SURFACE_TIERS := [
+	[" ", ".", ":", "-", "=", "+", "*", "#", "%", "@"],
+	[" ", "~", "<>", "+"],
+	[" ", "[]", "HN", "#"],
+]
+## Glyphes directionnels (ajoutés à la fin de la ligne 0), ordre attendu par le shader.
 const EDGE_GLYPHS := "|/-\\"
+## Doivent correspondre aux tailles des tableaux uniformes du shader.
+const MAX_SURFACES := 4
+const MAX_TIERS := 16
 ## Tailles de cellule accessibles avec +/-.
 const CELL_SIZES: Array[int] = [6, 8, 10, 12]
 
-## Taille de cellule initiale (pixels).
+## Taille de cellule initiale (pixels). Le personnage utilise la moitié.
 @export var cell_size: int = 8
 ## Police imposée (optionnelle). Sinon : premier fichier de `fonts_dir`, puis police système.
 @export var custom_font: Font
 ## Dossier scanné pour trouver une police (.ttf / .otf / .woff / .woff2).
 @export_dir var fonts_dir := "res://fonts"
-## Taille de police = cell_size + font_size_padding (les capitales n'occupent ~70 % de la hauteur).
+## Taille de police = taille de cellule + font_size_padding (les capitales n'occupent ~70 % de la hauteur).
 @export var font_size_padding: int = 2
 
 var ascii_enabled := true
 var edges_enabled := true
+var surface_glyphs_enabled := true
+var fine_player_enabled := true
 
 var _material: ShaderMaterial
 var _atlas_generator: GlyphAtlas
 var _font: Font
+var _atlas_rows := PackedStringArray()
 var _build_id := 0
 
 
@@ -51,9 +68,10 @@ func _ready() -> void:
 	add_child(_atlas_generator)
 	_font = _pick_font()
 
-	_material.set_shader_parameter("ramp_count", RAMP.length())
-	_material.set_shader_parameter("glyph_count", RAMP.length() + EDGE_GLYPHS.length())
+	_setup_surface_tables()
 	_material.set_shader_parameter("enable_edges", edges_enabled)
+	_material.set_shader_parameter("enable_surface_glyphs", surface_glyphs_enabled)
+	_material.set_shader_parameter("enable_fine_player", fine_player_enabled)
 
 	await _rebuild_atlas()
 	visible = ascii_enabled
@@ -73,6 +91,23 @@ func toggle_edges() -> void:
 	settings_changed.emit()
 
 
+func toggle_surface_glyphs() -> void:
+	surface_glyphs_enabled = not surface_glyphs_enabled
+	_material.set_shader_parameter("enable_surface_glyphs", surface_glyphs_enabled)
+	settings_changed.emit()
+
+
+func toggle_fine_player() -> void:
+	fine_player_enabled = not fine_player_enabled
+	_material.set_shader_parameter("enable_fine_player", fine_player_enabled)
+	settings_changed.emit()
+
+
+## Vue de debug du shader : 0 = normal, 1 = identifiants de surface en couleurs unies.
+func set_debug_view(mode: int) -> void:
+	_material.set_shader_parameter("debug_view", mode)
+
+
 ## step = +1 ou -1 : passe à la taille de cellule suivante / précédente.
 func step_cell_size(step: int) -> void:
 	var index := CELL_SIZES.find(cell_size)
@@ -86,25 +121,72 @@ func step_cell_size(step: int) -> void:
 	settings_changed.emit()
 
 
+func get_fine_cell_size() -> int:
+	return maxi(floori(cell_size / 2.0), 2)
+
+
 func get_font_name() -> String:
 	return _font.get_font_name() if _font else "?"
 
 
 # --- Interne ----------------------------------------------------------------
 
-## Régénère l'atlas pour la taille de cellule courante puis met à jour le shader.
+## Construit les lignes de l'atlas et les tables (début / nombre de variantes
+## de chaque palier) que le shader utilise pour trouver la bonne colonne.
+func _setup_surface_tables() -> void:
+	var tier_count := PackedInt32Array()
+	tier_count.resize(MAX_SURFACES)
+	var tier_start := PackedInt32Array()
+	tier_start.resize(MAX_SURFACES * MAX_TIERS)
+	var tier_variants := PackedInt32Array()
+	tier_variants.resize(MAX_SURFACES * MAX_TIERS)
+
+	_atlas_rows.clear()
+	for surface in SURFACE_TIERS.size():
+		var tiers: Array = SURFACE_TIERS[surface]
+		assert(tiers.size() <= MAX_TIERS, "Trop de paliers pour la surface %d" % surface)
+		var row := ""
+		for t in tiers.size():
+			var variants: String = tiers[t]
+			tier_start[surface * MAX_TIERS + t] = row.length()
+			tier_variants[surface * MAX_TIERS + t] = variants.length()
+			row += variants
+		tier_count[surface] = tiers.size()
+		if surface == 0:
+			# Les glyphes directionnels suivent la rampe par défaut.
+			_material.set_shader_parameter("edge_column", row.length())
+			row += EDGE_GLYPHS
+		_atlas_rows.append(row)
+
+	var columns := 0
+	for row in _atlas_rows:
+		columns = maxi(columns, row.length())
+
+	_material.set_shader_parameter("atlas_columns", columns)
+	_material.set_shader_parameter("atlas_rows", _atlas_rows.size())
+	_material.set_shader_parameter("tier_count", tier_count)
+	_material.set_shader_parameter("tier_start", tier_start)
+	_material.set_shader_parameter("tier_variants", tier_variants)
+
+
+## Régénère les deux atlas pour la taille de cellule courante puis met à jour le shader.
 func _rebuild_atlas() -> void:
 	_build_id += 1
 	var my_id := _build_id
 	var size := cell_size
-	var texture := await _atlas_generator.generate(RAMP + EDGE_GLYPHS, size, _font, size + font_size_padding)
+	var fine := get_fine_cell_size()
+
+	var atlas := await _atlas_generator.generate(_atlas_rows, size, _font, size + font_size_padding)
+	var atlas_fine := await _atlas_generator.generate(_atlas_rows, fine, _font, fine + font_size_padding)
 	if my_id != _build_id:
 		return # une génération plus récente a été lancée entre-temps
-	if texture == null:
+	if atlas == null or atlas_fine == null:
 		return
-	# On met à jour cell_size et atlas ensemble pour qu'ils restent cohérents.
-	_material.set_shader_parameter("glyph_atlas", texture)
+	# On met à jour tailles et atlas ensemble pour qu'ils restent cohérents.
+	_material.set_shader_parameter("glyph_atlas", atlas)
+	_material.set_shader_parameter("glyph_atlas_fine", atlas_fine)
 	_material.set_shader_parameter("cell_size", size)
+	_material.set_shader_parameter("fine_cell_size", fine)
 
 
 func _pick_font() -> Font:

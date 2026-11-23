@@ -1,33 +1,37 @@
 class_name GlyphAtlas
 extends Node
-## Génère l'atlas de glyphes au lancement.
+## Génère un atlas de glyphes au lancement.
 ##
 ## Godot ne sait pas dessiner du texte directement dans une Image : on passe donc
 ## par un SubViewport 2D transparent dans lequel un Node2D dessine chaque
 ## caractère avec draw_string(). Après un rendu, on récupère l'Image du viewport
 ## et on en fait une ImageTexture que le shader peut lire.
 ##
-## Résultat : une ligne de cases carrées de `cell` pixels, glyphes blancs sur fond
-## transparent (le shader n'utilise que le canal alpha comme masque).
+## Résultat : une grille de cases carrées de `cell` pixels (une ligne par
+## chaîne de `rows`), glyphes blancs sur fond transparent (le shader n'utilise
+## que le canal alpha comme masque).
 
 ## Si vrai, l'atlas est aussi sauvegardé dans user://glyph_atlas_<taille>.png (debug).
 @export var save_debug_png := false
 
 
 ## Génère l'atlas (coroutine : à appeler avec `await`).
+## `rows` : une chaîne de glyphes par ligne de l'atlas.
 ## Retourne null si le rendu n'est pas disponible (ex : mode headless).
-func generate(glyphs: String, cell: int, font: Font, font_size: int) -> ImageTexture:
-	var count := glyphs.length()
+func generate(rows: PackedStringArray, cell: int, font: Font, font_size: int) -> ImageTexture:
+	var columns := 0
+	for row in rows:
+		columns = maxi(columns, row.length())
 
 	var viewport := SubViewport.new()
-	viewport.size = Vector2i(cell * count, cell)
+	viewport.size = Vector2i(cell * columns, cell * rows.size())
 	viewport.transparent_bg = true
 	viewport.disable_3d = true
 	viewport.snap_2d_transforms_to_pixel = true
 	viewport.render_target_update_mode = SubViewport.UPDATE_ONCE
 
 	var canvas := GlyphCanvas.new()
-	canvas.glyphs = glyphs
+	canvas.rows = rows
 	canvas.cell = cell
 	canvas.font = font
 	canvas.font_size = font_size
@@ -53,7 +57,7 @@ func generate(glyphs: String, cell: int, font: Font, font_size: int) -> ImageTex
 
 ## Node2D interne qui dessine les glyphes, chacun centré dans sa case.
 class GlyphCanvas extends Node2D:
-	var glyphs := ""
+	var rows := PackedStringArray()
 	var cell := 8
 	var font: Font
 	var font_size := 10
@@ -63,8 +67,11 @@ class GlyphCanvas extends Node2D:
 		var descent := font.get_descent(font_size)
 		# Ligne de base choisie pour centrer verticalement la boîte ascent+descent.
 		var baseline := roundf((float(cell) + ascent - descent) * 0.5)
-		for i in glyphs.length():
-			var ch := glyphs[i]
-			var width := font.get_string_size(ch, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x
-			var x := roundf(float(i * cell) + (float(cell) - width) * 0.5)
-			draw_string(font, Vector2(x, baseline), ch, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, Color.WHITE)
+		for r in rows.size():
+			var glyphs := rows[r]
+			for i in glyphs.length():
+				var ch := glyphs[i]
+				var width := font.get_string_size(ch, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x
+				var x := roundf(float(i * cell) + (float(cell) - width) * 0.5)
+				var y := float(r * cell) + baseline
+				draw_string(font, Vector2(x, y), ch, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, Color.WHITE)

@@ -16,15 +16,15 @@ tonemap_mode = 0
 
 [sub_resource type="StandardMaterial3D" id="Mat_floor"]
 albedo_color = Color(0.4, 0.47, 0.6, 1)
-roughness = 0.95
+roughness = 0.62
 
 [sub_resource type="StandardMaterial3D" id="Mat_wall"]
 albedo_color = Color(0.55, 0.3, 0.85, 1)
-roughness = 0.85
+roughness = 0.66
 
 [sub_resource type="StandardMaterial3D" id="Mat_pillar"]
 albedo_color = Color(0.7, 0.4, 0.95, 1)
-roughness = 0.8
+roughness = 0.66
 
 [sub_resource type="StandardMaterial3D" id="Mat_crate"]
 albedo_color = Color(0.3, 0.75, 0.55, 1)
