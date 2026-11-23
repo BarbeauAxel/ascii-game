@@ -1,11 +1,15 @@
 extends CharacterBody3D
-## Contrôleur du personnage : déplacement ZQSD/WASD + flèches, saut, gravité.
+## Contrôleur du personnage : déplacement ZQSD/WASD + flèches, Maj pour
+## courir, saut, gravité. L'apparence et l'animation sont gérées par
+## soldier.gd (enfant Visual/Soldier), qui lit la vitesse de ce corps.
 ##
 ## Les actions sont déclarées avec des touches *physiques* : la touche en
 ## position "W" d'un clavier QWERTY est la touche "Z" d'un AZERTY, donc ZQSD
 ## et WASD fonctionnent sans configuration.
 
-@export var speed := 5.0
+## Vitesse de marche et de course (Maj maintenue), en m/s.
+@export var walk_speed := 3.2
+@export var run_speed := 6.5
 @export var acceleration := 14.0
 @export var jump_velocity := 4.5
 @export var turn_speed := 10.0
@@ -17,6 +21,11 @@ var gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity")
 
 func _ready() -> void:
 	_setup_input_actions()
+	# Les allures de l'animation suivent les vitesses réglées ici.
+	var soldier := get_node_or_null("Visual/Soldier")
+	if soldier:
+		soldier.walk_speed_ref = walk_speed
+		soldier.run_speed_ref = run_speed
 
 
 func _physics_process(delta: float) -> void:
@@ -32,6 +41,7 @@ func _physics_process(delta: float) -> void:
 	var input := Input.get_vector("move_left", "move_right", "move_forward", "move_back")
 	var direction := _camera_relative(input)
 
+	var speed := run_speed if Input.is_action_pressed("run") else walk_speed
 	var target := direction * speed
 	var blend := 1.0 - exp(-acceleration * delta)
 	velocity.x = lerpf(velocity.x, target.x, blend)
@@ -66,6 +76,7 @@ func _setup_input_actions() -> void:
 	_add_action("move_left", [KEY_A, KEY_LEFT])
 	_add_action("move_right", [KEY_D, KEY_RIGHT])
 	_add_action("jump", [KEY_SPACE])
+	_add_action("run", [KEY_SHIFT])
 
 
 func _add_action(action: StringName, physical_keys: Array) -> void:

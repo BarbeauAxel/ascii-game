@@ -2,8 +2,9 @@
 
 Une vraie scène 3D (Forward+) convertie à l'écran en glyphes ASCII colorés par
 un shader de post-traitement haute densité (cellules de 5 px, correspondance
-de forme, traits orientés). Un personnage (chapeau large, épée rose) se
-déplace dans une petite salle éclairée par la lune, une lanterne orange et un
+de forme, traits orientés). Un soldat en armure (heaume, plastron, cape,
+bouclier rond, épée longue), animé de façon procédurale, se déplace dans une
+petite salle éclairée par la lune, une lanterne orange et un
 cristal cyan, vue d'en haut en isométrique façon MMO RPG.
 
 ## Lancer
@@ -19,6 +20,7 @@ cristal cyan, vue d'en haut en isométrique façon MMO RPG.
 | Touche                     | Action                                  |
 |----------------------------|-----------------------------------------|
 | ZQSD / WASD / flèches      | Se déplacer (Z = vers le haut de l'écran) |
+| Maj (maintenue)            | Courir                                  |
 | Espace                     | Sauter                                  |
 | Molette                    | Zoom par paliers                        |
 | F1                         | Effet ASCII on/off (comparer au rendu brut) |
@@ -83,15 +85,49 @@ Pour une isométrique « vraie » (style Dofus), mettez `pitch_degrees` à envir
 project.godot          config (Forward+, 1280x720, MSAA off)
 export_presets.cfg     presets Windows / Linux
 scenes/main.tscn       niveau, lumières, environnement, caméra + quad ASCII, HUD
-scenes/player.tscn     personnage (CharacterBody3D + primitives)
+scenes/player.tscn     joueur (CharacterBody3D + nœud Visual/Soldier)
 scripts/main.gd        touches de debug, HUD, compteur de FPS
-scripts/player.gd      déplacement, gravité, saut, actions d'entrée
+scripts/player.gd      déplacement (marche / course), gravité, saut, actions d'entrée
+scripts/soldier.gd     soldat : construction en code + animation procédurale
 scripts/camera_follow.gd   caméra isométrique orthographique, calage, zoom
 scripts/ascii_post_process.gd  pilote du quad : police, atlas, analyse, réglages
 scripts/glyph_atlas.gd rendu et analyse de l'atlas de glyphes
 shaders/ascii.gdshader le shader de post-traitement
 fonts/                 police pixel Press Start 2P (OFL) + sa licence
 ```
+
+## Le soldat (`scripts/soldier.gd`)
+
+Aucun modèle importé : le soldat est construit en code au lancement (le script
+est aussi exécuté dans l'éditeur, on le voit donc dans la scène).
+
+- **Squelette de pivots** : hanches → colonne → buste → cou → tête ; épaules
+  → coudes → mains ; cuisses → genoux → chevilles. Chaque pivot porte des
+  pièces simples (cylindres effilés, sphères aplaties, boîtes). Proportions
+  d'un adulte de 1,80 m, environ 7,5 têtes.
+- **Équipement** : heaume fermé à fente de vision et cimier rouge, camail de
+  mailles, gorgerin, plastron bombé à arête, épaulières à deux lames, jupe de
+  mailles, ceinture à boucle, tabard rouge (pans avant / arrière), cape en deux
+  segments, cubitières et genouillères, grèves, bottes, bouclier rond à umbo
+  sur l'avant-bras gauche, épée longue en main droite, fourreau à la hanche.
+- **Animation procédurale**, calculée à partir de la vitesse du
+  `CharacterBody3D` :
+  - repos : respiration du buste, regard qui balaie lentement ;
+  - marche / course (Maj) : la phase du cycle avance avec la distance
+    parcourue (`stride_walk`, `stride_run`), donc les pieds ne glissent pas.
+    Ciseaux des jambes, genou plié pendant le passage du pied, pied à plat puis
+    pointe relevée, balancier des bras opposé aux jambes, rotation du bassin et
+    contre-rotation des épaules, buste penché à la course, rebond vertical ;
+  - saut : jambes repliées, bras écartés ;
+  - cape et pans du tabard : ressort amorti (retard, ondulation), les pans
+    s'écartent avec les cuisses.
+- **Éclairage propre au personnage** : une lumière de face (côté caméra) et un
+  contre-jour bleuté qui n'éclairent **que** le soldat (calque de rendu 2,
+  `light_cull_mask`). Sans eux, l'armure reflète surtout le ciel nocturne et
+  devient une silhouette noire une fois en glyphes. Les tissus ont un liseré
+  (`rim`) pour se détacher du fond.
+- **Métal à moitié** (`metallic` ≈ 0,45) pour la même raison.
+- Couleurs et intensités réglables dans l'inspecteur (`Player/Visual/Soldier`).
 
 ## Pipeline du shader (`shaders/ascii.gdshader`)
 
@@ -118,8 +154,14 @@ Pour chaque pixel, le fragment shader :
      et le plus proche gagne. Une cellule claire en haut donne `"` `^` `'`,
      claire en bas `_` `.` `,`, etc.
 4. **Contours et traits orientés** (prioritaires) :
-   - **contour géométrique** : Sobel sur la profondeur linéaire et sur les
-     normales (`edge_threshold_depth`, `edge_threshold_normal`) ;
+   - **contour de silhouette** : Laplacien de la profondeur linéaire, exprimé
+     en tailles de cellule (`edge_threshold_depth`). Une pente régulière (le
+     sol vu en biais) donne 0, et le contour est dessiné sur l'objet du premier
+     plan. Fonctionne en orthographique comme en perspective ;
+   - **pli** : angle maximal entre la normale de la cellule et celles de ses 4
+     voisines (`edge_threshold_normal`, en 1 − cos). Une petite surface courbe
+     (casque, épaulière) ne tourne que peu d'un échantillon à l'autre et garde
+     ses glyphes de forme ; un coin de mur donne un contour ;
    - **trait orienté** : tenseur de structure des gradients de luminance de la
      cellule. S'ils sont forts (`stroke_threshold`) et alignés
      (`stroke_coherence`), la cellule devient un trait. Son orientation tient
@@ -147,8 +189,8 @@ Override*. Les uniforms sont rangés par groupes.
 | | `shape_contrast` | 1.8 | plus haut = plus de glyphes « de forme » |
 | | `flat_threshold` | 0.003 | sous cette variance, la cellule utilise la rampe |
 | contours et traits | `enable_edges` / `enable_strokes` | true | contours / traits orientés (F2) |
-| | `edge_threshold_depth` | 0.35 | seuil Sobel profondeur (relatif) |
-| | `edge_threshold_normal` | 1.5 | seuil Sobel normales |
+| | `edge_threshold_depth` | 3.0 | rupture de profondeur minimale, en cellules |
+| | `edge_threshold_normal` | 0.5 | pli minimal (1 − cos de l'angle ; 0.5 = 60°) |
 | | `stroke_threshold` | 0.12 | force minimale du gradient pour un trait |
 | | `stroke_coherence` | 0.65 | alignement minimal des gradients (0 à 1) |
 | | `stroke_normal_weight` | 0.5 | poids des normales dans l'orientation |
@@ -157,6 +199,7 @@ Override*. Les uniforms sont rangés par groupes.
 | | `global_tint` | bleu nuit léger | teinte globale |
 | | `color_boost` | 1.15 | luminosité des glyphes |
 | | `edge_brightness`, `edge_min_brightness` | 1.25 / 0.22 | luminosité des contours |
+| | `line_density_target`, `line_max_gain` | 0.35 / 2.0 | éclaircit les glyphes de trait, peu couvrants |
 | | `use_color`, `mono_color` | true / vert | rendu monochrome |
 | — | `debug_view` | 0 | 1 = luminance après tonemapping |
 
@@ -165,7 +208,8 @@ Override*. Les uniforms sont rangés par groupes.
 - les ombres sont trop noires → montez `dark_floor` ;
 - pas assez de formes, trop de rampe → montez `shape_contrast` ou baissez `flat_threshold` ;
 - trop de traits orientés parasites → montez `stroke_threshold` ou `stroke_coherence` ;
-- le sol se couvre de contours au loin → montez `edge_threshold_depth`.
+- le personnage est couvert de contours → montez `edge_threshold_normal` ;
+- les silhouettes ne sont pas cernées → baissez `edge_threshold_depth`.
 
 ## Atlas et analyse des glyphes
 

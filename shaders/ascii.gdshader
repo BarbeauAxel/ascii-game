@@ -58,8 +58,15 @@ uniform float flat_threshold : hint_range(0.0, 0.05) = 0.003;
 
 group_uniforms contours_et_traits;
 uniform bool enable_edges = true;
-uniform float edge_threshold_depth : hint_range(0.0, 4.0) = 0.35;
-uniform float edge_threshold_normal : hint_range(0.0, 8.0) = 1.5;
+// Rupture de profondeur (silhouette) : Laplacien de la profondeur, exprimé en
+// « cellules » (taille d'une cellule projetée dans le monde). Une pente
+// régulière (sol vu en biais) donne 0 ; un objet devant un autre, beaucoup plus.
+uniform float edge_threshold_depth : hint_range(0.0, 20.0) = 3.0;
+// Arête vive (pli) : angle maximal entre la normale de la cellule et celles
+// de ses 4 voisines (à une demi-cellule), en 1 - cos(angle). Une surface
+// courbe lisse, même petite, ne tourne que peu d'un échantillon à l'autre ;
+// un pli (coin de mur, pièce posée sur une autre) donne un saut net.
+uniform float edge_threshold_normal : hint_range(0.0, 2.0) = 0.5;
 uniform bool enable_strokes = true;
 // Force minimale du gradient de luminance (unités tonemappées) pour un trait.
 uniform float stroke_threshold : hint_range(0.0, 1.0) = 0.12;
@@ -76,6 +83,11 @@ uniform vec3 global_tint : source_color = vec3(0.86, 0.9, 1.0);     // teinte gl
 uniform float color_boost : hint_range(0.0, 4.0) = 1.15;            // luminosité des glyphes
 uniform float edge_brightness : hint_range(0.0, 4.0) = 1.25;
 uniform float edge_min_brightness : hint_range(0.0, 1.0) = 0.22;
+// Les glyphes de trait (| / - \) couvrent peu de pixels : on les éclaircit pour
+// que la cellule garde la luminosité moyenne de la zone. Densité de référence
+// (0 = pas de compensation) et gain maximal.
+uniform float line_density_target : hint_range(0.0, 1.0) = 0.35;
+uniform float line_max_gain : hint_range(1.0, 4.0) = 2.0;
 uniform vec3 mono_color : source_color = vec3(0.75, 0.9, 0.75);     // si use_color = false
 
 group_uniforms;
@@ -210,6 +222,7 @@ void fragment() {
 		// 4. Contours géométriques et traits orientés
 		// -----------------------------------------------------------------
 		bool is_edge = false;
+		bool is_line = false;  // contour ou trait : glyphe directionnel
 		if (enable_edges || enable_strokes) {
 			// Profondeur et normales sur une grille 3x3 espacée d'une demi-cellule.
 			vec2 h = vec2(cs * 0.5) * texel;
@@ -224,18 +237,27 @@ void fragment() {
 				}
 			}
 			// Indices :  0 1 2 / 3 4 5 / 6 7 8
-			float gxd = ((d[2] + 2.0 * d[5] + d[8]) - (d[0] + 2.0 * d[3] + d[6])) / d[4];
-			float gyd = ((d[6] + 2.0 * d[7] + d[8]) - (d[0] + 2.0 * d[1] + d[2])) / d[4];
-			float depth_mag = length(vec2(gxd, gyd));
+			float gxd = (d[2] + 2.0 * d[5] + d[8]) - (d[0] + 2.0 * d[3] + d[6]);
+			float gyd = (d[6] + 2.0 * d[7] + d[8]) - (d[0] + 2.0 * d[1] + d[2]);
+			float depth_mag = max(length(vec2(gxd, gyd)), 1e-6);
+			// Taille d'une cellule dans le monde, à la profondeur de la cellule :
+			// constante en orthographique (P[3][3] = 1), proportionnelle à la
+			// distance en perspective.
+			float ortho = PROJECTION_MATRIX[3][3];
+			float cell_world = cs * 2.0 * mix(d[4], 1.0, ortho) / (PROJECTION_MATRIX[1][1] * VIEWPORT_SIZE.y);
+			// Laplacien positif = la cellule est devant ses voisines : le contour
+			// est dessiné sur l'objet du premier plan, pas sur le fond.
+			float depth_lap = (d[1] + d[3] + d[5] + d[7] - 4.0 * d[4]) / cell_world;
 			vec3 gxn = (n[2] + 2.0 * n[5] + n[8]) - (n[0] + 2.0 * n[3] + n[6]);
 			vec3 gyn = (n[6] + 2.0 * n[7] + n[8]) - (n[0] + 2.0 * n[1] + n[2]);
 			float normal_mag2 = dot(gxn, gxn) + dot(gyn, gyn);
+			float crease = 1.0 - min(min(dot(n[4], n[1]), dot(n[4], n[7])), min(dot(n[4], n[3]), dot(n[4], n[5])));
 			vec3 J_normal = normal_mag2 > 1e-6
 				? vec3(dot(gxn, gxn), dot(gyn, gyn), dot(gxn, gyn)) / normal_mag2
 				: vec3(0.0);
 
-			bool depth_edge = enable_edges && depth_mag > edge_threshold_depth;
-			bool normal_edge = enable_edges && sqrt(normal_mag2) > edge_threshold_normal;
+			bool depth_edge = enable_edges && depth_lap > edge_threshold_depth;
+			bool normal_edge = enable_edges && crease > edge_threshold_normal;
 
 			if (depth_edge || normal_edge) {
 				// 4a. Contour : orientation combinée profondeur + normales.
@@ -249,6 +271,7 @@ void fragment() {
 				}
 				glyph = direction_glyph(J);
 				is_edge = true;
+				is_line = true;
 			} else if (enable_strokes && !is_sky) {
 				// 4b. Trait orienté : tenseur de structure de la luminance, à
 				// partir des 4 gradients 2x2 de la grille 3x3. Les rayures
@@ -270,6 +293,7 @@ void fragment() {
 					: 0.0;
 				if (strength > stroke_threshold && coherence > stroke_coherence) {
 					glyph = direction_glyph(J_lum / trace + J_normal * stroke_normal_weight);
+					is_line = true;
 				}
 			}
 		}
@@ -286,6 +310,10 @@ void fragment() {
 		float brightness = clamp(mean * color_boost, 0.0, 1.0);
 		if (is_edge) {
 			brightness = clamp(max(brightness * edge_brightness, edge_min_brightness), 0.0, 1.0);
+		}
+		if (is_line && line_density_target > 0.0) {
+			float density = glyph_shape[glyph * 3 + 2].y;
+			brightness = clamp(brightness * clamp(line_density_target / max(density, 0.01), 1.0, line_max_gain), 0.0, 1.0);
 		}
 
 		vec3 tint;
