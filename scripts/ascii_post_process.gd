@@ -41,6 +41,11 @@ const CELL_SIZES: Array[int] = [6, 8, 10, 12]
 @export_dir var fonts_dir := "res://fonts"
 ## Taille de police = taille de cellule + font_size_padding (les capitales n'occupent ~70 % de la hauteur).
 @export var font_size_padding: int = 2
+## Police pixel (fichier de fonts/ ou custom_font) : taille de sa grille native
+## (8 pour Press Start 2P). La taille de police devient alors le plus grand
+## multiple de cette valeur qui tient dans la cellule, sans antialiasing, pour
+## des pixels nets. 0 = traiter la police comme une police vectorielle classique.
+@export var font_pixel_size: int = 8
 
 var ascii_enabled := true
 var edges_enabled := true
@@ -50,6 +55,11 @@ var fine_player_enabled := true
 var _material: ShaderMaterial
 var _atlas_generator: GlyphAtlas
 var _font: Font
+## Pour une police pixel : copie lissée utilisée quand la cellule est plus
+## petite que la grille native (ex : cellules de 4 px du personnage), où un
+## rendu sans antialiasing perdrait des pixels entiers.
+var _font_smooth: Font
+var _is_pixel_font := false
 var _atlas_rows := PackedStringArray()
 var _build_id := 0
 
@@ -65,6 +75,8 @@ func _ready() -> void:
 	cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 
 	_atlas_generator = GlyphAtlas.new()
+	# Debug : "-- --save-atlas" écrit les atlas en PNG dans user://
+	_atlas_generator.save_debug_png = "--save-atlas" in OS.get_cmdline_user_args()
 	add_child(_atlas_generator)
 	_font = _pick_font()
 
@@ -176,8 +188,8 @@ func _rebuild_atlas() -> void:
 	var size := cell_size
 	var fine := get_fine_cell_size()
 
-	var atlas := await _atlas_generator.generate(_atlas_rows, size, _font, size + font_size_padding)
-	var atlas_fine := await _atlas_generator.generate(_atlas_rows, fine, _font, fine + font_size_padding)
+	var atlas := await _atlas_generator.generate(_atlas_rows, size, _font_for_cell(size), _font_size_for_cell(size))
+	var atlas_fine := await _atlas_generator.generate(_atlas_rows, fine, _font_for_cell(fine), _font_size_for_cell(fine))
 	if my_id != _build_id:
 		return # une génération plus récente a été lancée entre-temps
 	if atlas == null or atlas_fine == null:
@@ -189,13 +201,30 @@ func _rebuild_atlas() -> void:
 	_material.set_shader_parameter("fine_cell_size", fine)
 
 
-func _pick_font() -> Font:
-	if custom_font:
-		return custom_font
+## Taille de police à utiliser pour une taille de cellule donnée.
+func _font_size_for_cell(cell: int) -> int:
+	if _is_pixel_font:
+		if cell >= font_pixel_size:
+			# Plus grand multiple de la grille native : chaque pixel de la police
+			# tombe exactement sur 1, 2, 3… pixels de l'écran.
+			return floori(float(cell) / font_pixel_size) * font_pixel_size
+		return cell # cellule plus petite que la grille : réduction inévitable
+	return cell + font_size_padding
 
-	var from_dir := _find_font_in_dir(fonts_dir)
-	if from_dir:
-		return from_dir
+
+## Police à utiliser pour une taille de cellule donnée (nette ou lissée).
+func _font_for_cell(cell: int) -> Font:
+	if _is_pixel_font and cell < font_pixel_size:
+		return _font_smooth
+	return _font
+
+
+func _pick_font() -> Font:
+	var file_font: Font = custom_font if custom_font else _find_font_in_dir(fonts_dir)
+	if file_font:
+		if font_pixel_size > 0 and file_font is FontFile:
+			_setup_pixel_font(file_font)
+		return file_font
 
 	# Police monospace du système (présente sur Windows / la plupart des Linux).
 	var system_font := SystemFont.new()
@@ -209,6 +238,17 @@ func _pick_font() -> Font:
 
 	# Dernier recours : police par défaut du moteur.
 	return ThemeDB.fallback_font
+
+
+## Configure une police pixel : rendu net (sans antialiasing ni hinting, pixels
+## entiers) et prépare une copie lissée pour les cellules trop petites.
+func _setup_pixel_font(font: FontFile) -> void:
+	_is_pixel_font = true
+	_font_smooth = font.duplicate() as Font
+	(_font_smooth as FontFile).antialiasing = TextServer.FONT_ANTIALIASING_GRAY
+	font.antialiasing = TextServer.FONT_ANTIALIASING_NONE
+	font.hinting = TextServer.HINTING_NONE
+	font.subpixel_positioning = TextServer.SUBPIXEL_POSITIONING_DISABLED
 
 
 func _find_font_in_dir(path: String) -> Font:

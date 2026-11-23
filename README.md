@@ -38,6 +38,7 @@ des comparaisons :
 | `--no-fine-player`     | démarre sans cellules fines sur le personnage |
 | `--debug-ids`          | affiche les identifiants de surface en couleurs unies |
 | `--debug-view=2`       | affiche la roughness en niveaux de gris (valeur = pixel / 255) |
+| `--save-atlas`         | enregistre les atlas de glyphes en PNG dans `user://` |
 
 Exemple : `godot --path . -- --debug-ids`
 
@@ -57,7 +58,7 @@ scripts/camera_follow.gd   caméra 3e personne en vue plongeante
 scripts/ascii_post_process.gd  pilote du quad : choix de police, atlas, réglages
 scripts/glyph_atlas.gd génération de l'atlas de glyphes au lancement
 shaders/ascii.gdshader le shader de post-traitement
-fonts/                 (optionnel) déposez-y une police .ttf/.otf
+fonts/                 police pixel Press Start 2P (OFL) + sa licence
 ```
 
 ## Pipeline du shader (`shaders/ascii.gdshader`)
@@ -188,12 +189,19 @@ rendu, l'image est récupérée avec `get_texture().get_image()` et transformée
 
 Choix de la police, dans l'ordre :
 1. `custom_font` (propriété exportée du quad) ;
-2. le premier `.ttf/.otf/.woff(2)` du dossier `fonts/` ;
+2. le premier `.ttf/.otf/.woff(2)` du dossier `fonts/`. Par défaut c'est
+   **Press Start 2P**, une police pixel sous licence OFL (voir `fonts/README.md`) ;
 3. une police monospace du système (Consolas, DejaVu Sans Mono, …) ;
 4. la police par défaut de Godot.
 
-Pour voir l'atlas généré, activez `save_debug_png` dans `glyph_atlas.gd` : il est
-écrit dans `user://glyph_atlas_<taille>.png`.
+Pour une police pixel (`font_pixel_size` > 0, 8 par défaut), la taille de police
+est le plus grand multiple de la grille native qui tient dans la cellule, sans
+antialiasing : les glyphes sont nets en cellules de 8, 10 et 12 px. Sous 8 px
+(personnage, cellules de 6 px), une copie lissée de la police est utilisée.
+
+Pour voir les atlas générés, lancez avec `-- --save-atlas`. Ils sont écrits
+dans `user://glyph_atlas_<taille>.png`, soit sous Windows
+`%APPDATA%\Godot\app_userdata\ASCII 3D Prototype\`.
 
 ## Exporter un exécutable
 
