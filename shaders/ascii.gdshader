@@ -1,22 +1,22 @@
 // =============================================================================
-// Post-traitement "ASCII 3D"
+// Post-traitement "ASCII 3D" haute densité
 // -----------------------------------------------------------------------------
 // Appliqué sur un QuadMesh 2x2 enfant de la caméra. Le vertex shader place le
-// quad directement en clip space pour qu'il couvre tout l'écran, quel que soit
-// le point de vue. Le fragment shader lit l'image de la scène (couleur,
-// profondeur, normales + rugosité), la découpe en cellules et remplace chaque
-// cellule par un glyphe tiré d'un atlas généré au lancement
-// (voir scripts/glyph_atlas.gd et scripts/ascii_post_process.gd).
+// quad directement en clip space pour qu'il couvre tout l'écran. Le fragment
+// shader lit l'image de la scène (couleur, profondeur, normales), la découpe en
+// cellules et remplace chaque cellule par un glyphe de l'atlas généré au
+// lancement (scripts/glyph_atlas.gd + scripts/ascii_post_process.gd).
 //
-// Atlas : une grille de cases carrées, une ligne par type de surface :
-//   ligne 0 : rampe par défaut " .:-=+*#%@" puis glyphes directionnels "|/-\"
-//   ligne 1 : sol     " ~<>+"
-//   ligne 2 : murs    " []HN#"
-// Les tables tier_* indiquent où commence chaque palier de luminosité et
-// combien de variantes il contient.
+// Choix du glyphe, par ordre de priorité :
+//   1. contour géométrique (Sobel profondeur / normales)   -> | / - \
+//   2. trait orienté (texture striée : gradient de luminance cohérent,
+//      orientation guidée aussi par les normales)            -> | / - \
+//   3. correspondance de forme : la luminance 3x3 de la cellule est comparée
+//      au descripteur 3x3 de chaque glyphe, le plus proche gagne
+//      (moitié haute claire -> " ^ ', moitié basse -> _ . , …)
+//   4. cellule uniforme : rampe de densité triée automatiquement.
 //
-// Identifiant de surface : encodé dans la ROUGHNESS des matériaux (valeurs
-// réservées surface_roughness_*), relue dans hint_normal_roughness_texture.
+// Atlas : une ligne de cases carrées de cell_size px, glyphe i en colonne i.
 // =============================================================================
 shader_type spatial;
 render_mode unshaded, depth_test_disabled, depth_draw_never, cull_disabled, fog_disabled;
@@ -26,56 +26,64 @@ uniform sampler2D screen_texture : hint_screen_texture, filter_linear, repeat_di
 uniform sampler2D depth_texture : hint_depth_texture, filter_nearest, repeat_disable;
 uniform sampler2D normal_roughness_texture : hint_normal_roughness_texture, filter_nearest, repeat_disable;
 
-// --- Atlas de glyphes (blanc sur transparent, on n'utilise que l'alpha) ---
-uniform sampler2D glyph_atlas : filter_nearest, repeat_disable;       // cases de cell_size
-uniform sampler2D glyph_atlas_fine : filter_nearest, repeat_disable;  // cases de fine_cell_size
-uniform int atlas_columns = 14;
-uniform int atlas_rows = 3;
-uniform int edge_column = 10;     // colonne du premier glyphe directionnel (ligne 0)
-// Tables remplies par le script (MAX_SURFACES = 4, MAX_TIERS = 16) :
-uniform int tier_count[4];        // nombre de paliers par ligne
-uniform int tier_start[64];       // [ligne * 16 + palier] -> première colonne
-uniform int tier_variants[64];    // [ligne * 16 + palier] -> nombre de variantes
+// --- Atlas et descripteurs (remplis par le script) ---
+uniform sampler2D glyph_atlas : filter_nearest, repeat_disable;
+uniform int glyph_count = 1;
+// 3 vec4 par glyphe : [r0 r1 r2 r3] [r4 r5 r6 r7] [r8 densité - -]
+// (couverture des 9 régions 3x3, normalisée sur l'atlas entier).
+uniform vec4 glyph_shape[384];
+uniform int ramp_count = 1;
+uniform int ramp[32];             // index de glyphes, du plus clair au plus dense
+uniform ivec4 dir_glyphs;         // index des glyphes | / - \
 
-// --- Paramètres exposés ---
-uniform int cell_size : hint_range(2, 32) = 8;
-uniform int fine_cell_size : hint_range(2, 32) = 4; // cellules du personnage
+uniform int cell_size : hint_range(2, 32) = 5;
+
+group_uniforms tonemapping;
+// Courbe appliquée à la luminance linéaire de la scène AVANT le choix du glyphe :
+// t = 1 - exp(-l * exposure)  puis  t^(1/gamma)  puis contraste autour de 0.5.
+uniform float exposure : hint_range(0.1, 16.0) = 3.0;
+uniform float gamma : hint_range(0.2, 4.0) = 1.6;          // > 1 : éclaircit les tons sombres
+uniform float contrast : hint_range(0.2, 3.0) = 1.1;
+// Plancher appliqué à toute la géométrie (pas au ciel) : les zones sombres
+// gardent des glyphes discrets au lieu de tomber au noir total.
+uniform float dark_floor : hint_range(0.0, 0.5) = 0.08;
+
+group_uniforms glyphes;
+uniform bool use_shape_matching = true;
+// Amplifie les écarts de luminance dans la cellule avant comparaison :
+// plus haut = plus de glyphes « de forme », moins de glyphes de rampe.
+uniform float shape_contrast : hint_range(0.5, 4.0) = 1.8;
+// Variance de luminance en dessous de laquelle la cellule est « uniforme » (rampe).
+uniform float flat_threshold : hint_range(0.0, 0.05) = 0.003;
+
+group_uniforms contours_et_traits;
+uniform bool enable_edges = true;
 uniform float edge_threshold_depth : hint_range(0.0, 4.0) = 0.35;
 uniform float edge_threshold_normal : hint_range(0.0, 8.0) = 1.5;
-uniform float color_boost : hint_range(0.0, 4.0) = 1.6;
+uniform bool enable_strokes = true;
+// Force minimale du gradient de luminance (unités tonemappées) pour un trait.
+uniform float stroke_threshold : hint_range(0.0, 1.0) = 0.12;
+// Cohérence minimale (0 = gradients en tous sens, 1 = parfaitement alignés).
+uniform float stroke_coherence : hint_range(0.0, 1.0) = 0.65;
+// Poids des normales dans l'orientation des traits.
+uniform float stroke_normal_weight : hint_range(0.0, 4.0) = 0.5;
+
+group_uniforms couleur;
 uniform bool use_color = true;
-uniform bool enable_edges = true;
-uniform bool enable_surface_glyphs = true; // glyphes spécifiques sol / murs
-uniform bool enable_fine_player = true;    // cellules plus petites sur le personnage
+uniform float saturation : hint_range(0.0, 2.0) = 0.6;              // palette naturelle, désaturée
+uniform float highlight_saturation : hint_range(0.0, 3.0) = 1.4;    // sources de lumière : couleurs vives
+uniform vec3 global_tint : source_color = vec3(0.86, 0.9, 1.0);     // teinte globale (nuit légèrement bleutée)
+uniform float color_boost : hint_range(0.0, 4.0) = 1.15;            // luminosité des glyphes
+uniform float edge_brightness : hint_range(0.0, 4.0) = 1.25;
+uniform float edge_min_brightness : hint_range(0.0, 1.0) = 0.22;
+uniform vec3 mono_color : source_color = vec3(0.75, 0.9, 0.75);     // si use_color = false
 
-// --- Réglages fins supplémentaires ---
-uniform float luminance_gain : hint_range(0.1, 8.0) = 1.5;      // éclaircit la rampe (scène sombre)
-uniform float ramp_contrast : hint_range(0.25, 4.0) = 1.6;      // >1 : tons moyens -> glyphes clairsemés (n'affecte pas la couleur)
-uniform float surface_ramp_gain : hint_range(0.5, 6.0) = 2.5;  // étale la luminosité sur les paliers sol / murs
-uniform float saturation_boost : hint_range(0.0, 3.0) = 1.3;    // >1 = couleurs plus saturées
-uniform float edge_brightness : hint_range(0.0, 4.0) = 1.3;     // multiplicateur de luminosité des contours
-uniform float edge_min_brightness : hint_range(0.0, 1.0) = 0.3; // les contours restent visibles dans le noir
-uniform vec3 mono_color : source_color = vec3(0.75, 0.9, 0.75); // couleur si use_color = false
-uniform float max_depth = 500.0;                                 // borne la profondeur du ciel
-
-// --- Identifiants de surface (valeurs de roughness réservées) ---
-// Précision du buffer : ~1/255. Garder ces valeurs espacées d'au moins 0.03
-// et ne pas les utiliser pour d'autres matériaux.
-uniform float surface_roughness_floor = 0.62;
-uniform float surface_roughness_wall = 0.66;
-uniform float surface_roughness_player = 0.70;
-uniform float surface_roughness_tolerance = 0.012;
-
-// --- Debug : 0 = rendu ASCII, 1 = identifiants de surface en couleurs unies,
-//             2 = roughness en niveaux de gris ---
+group_uniforms;
+uniform float max_depth = 500.0;
+// Debug : 0 = rendu ASCII, 1 = luminance après tonemapping (par pixel).
 uniform int debug_view = 0;
 
 const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
-const int SURFACE_DEFAULT = 0;
-const int SURFACE_FLOOR = 1;
-const int SURFACE_WALL = 2;
-const int SURFACE_PLAYER = 3;
-const int MAX_TIERS = 16;
 
 void vertex() {
 	// Écriture directe en clip space : le quad 2x2 (-1..1) couvre tout l'écran.
@@ -83,7 +91,8 @@ void vertex() {
 	POSITION = vec4(VERTEX.xy, 1.0, 1.0);
 }
 
-// Profondeur linéaire (distance positive à la caméra, en mètres).
+// Profondeur linéaire (distance positive à la caméra). Marche en perspective
+// comme en orthographique (w = 1).
 float linear_depth(vec2 uv, mat4 inv_proj) {
 	float raw = texture(depth_texture, uv).r;
 	vec4 view = inv_proj * vec4(uv * 2.0 - 1.0, raw, 1.0);
@@ -97,133 +106,112 @@ vec3 view_normal(vec2 uv) {
 	return n / max(length(n), 1e-4); // normalisation sans risque de NaN
 }
 
-// Roughness sous un point de l'écran. Pour un shader spatial, Godot fournit
-// dans hint_normal_roughness_texture la roughness déjà décodée (mesuré en
-// 4.3 : valeur du matériau à ~1/255 près, objets dynamiques compris). Le
-// codage 7 bits / « 1 - r » ne concerne que le buffer interne (effets compositor).
-float roughness_at(vec2 uv) {
-	return texture(normal_roughness_texture, uv).a;
+// Courbe de tonemapping (luminance linéaire -> 0..1).
+float tonemap(float l) {
+	float t = 1.0 - exp(-max(l, 0.0) * exposure); // compresse les hautes lumières
+	t = pow(t, 1.0 / gamma);                      // relève les tons sombres
+	t = (t - 0.5) * contrast + 0.5;
+	return clamp(t, 0.0, 1.0);
 }
 
-// Type de surface sous un point de l'écran, d'après la roughness.
-int surface_at(vec2 uv) {
-	float r = roughness_at(uv);
-	if (abs(r - surface_roughness_player) < surface_roughness_tolerance) {
-		return SURFACE_PLAYER;
-	}
-	if (abs(r - surface_roughness_wall) < surface_roughness_tolerance) {
-		return SURFACE_WALL;
-	}
-	if (abs(r - surface_roughness_floor) < surface_roughness_tolerance) {
-		return SURFACE_FLOOR;
-	}
-	return SURFACE_DEFAULT;
-}
-
-// Inverse exact de l'encodage sRGB de sortie : la valeur lue dans la capture
-// d'écran (0..255) vaut alors x * 255 (vue de debug 2).
+// Inverse exact de l'encodage sRGB de sortie (vues de debug lisibles au pixel près).
 float srgb_to_linear(float x) {
 	return x <= 0.04045 ? x / 12.92 : pow((x + 0.055) / 1.055, 2.4);
 }
 
-// Pseudo-aléatoire stable par cellule (choix des variantes de glyphes).
-float cell_hash(vec2 c) {
-	return fract(sin(dot(c, vec2(12.9898, 78.233))) * 43758.5453);
+// Orientation d'un tenseur de structure (Jxx, Jyy, Jxy) quantifiée en
+// index de glyphe directionnel. Axe Y écran vers le bas.
+//   gradient horizontal -> trait vertical "|", bas-droite -> "/",
+//   vertical -> "-", bas-gauche -> "\"
+int direction_glyph(vec3 J) {
+	float theta = 0.5 * atan(2.0 * J.z, J.x - J.y);
+	if (theta < 0.0) {
+		theta += PI;
+	}
+	int dir = int(floor(theta / (PI * 0.25) + 0.5)) % 4;
+	return dir == 0 ? dir_glyphs.x : (dir == 1 ? dir_glyphs.y : (dir == 2 ? dir_glyphs.z : dir_glyphs.w));
 }
 
 void fragment() {
 	vec2 texel = 1.0 / VIEWPORT_SIZE;
 
 	if (debug_view == 1) {
-		// Vue de debug : chaque type de surface en couleur unie, par pixel.
-		int s = surface_at(SCREEN_UV);
-		vec3 debug_color = vec3(0.08);
-		if (s == SURFACE_FLOOR) {
-			debug_color = vec3(0.1, 0.3, 1.0);
-		} else if (s == SURFACE_WALL) {
-			debug_color = vec3(0.6, 0.1, 1.0);
-		} else if (s == SURFACE_PLAYER) {
-			debug_color = vec3(1.0, 0.8, 0.0);
-		}
-		ALBEDO = debug_color;
-	} else if (debug_view == 2) {
-		// Vue de debug : roughness en niveaux de gris (valeur = pixel / 255).
-		ALBEDO = vec3(srgb_to_linear(clamp(roughness_at(SCREEN_UV), 0.0, 1.0)));
+		float t = tonemap(dot(texture(screen_texture, SCREEN_UV).rgb, LUMA));
+		ALBEDO = vec3(srgb_to_linear(t));
 	} else {
 		// -----------------------------------------------------------------
-		// 1. Découpage en cellules. Si la petite cellule qui contient ce pixel
-		//    tombe sur le personnage, on utilise la grille fine pour ce pixel.
+		// 1. Cellule courante
 		// -----------------------------------------------------------------
 		float cs = float(cell_size);
-		bool fine = false;
-		if (enable_fine_player) {
-			float fs = float(fine_cell_size);
-			vec2 fine_center_uv = (floor(FRAGCOORD.xy / fs) + 0.5) * fs * texel;
-			if (surface_at(fine_center_uv) == SURFACE_PLAYER) {
-				fine = true;
-				cs = fs;
-			}
-		}
-
 		vec2 cell = floor(FRAGCOORD.xy / cs);
-		vec2 center_uv = (cell + 0.5) * cs * texel;
+		vec2 cell_origin = cell * cs;
 		vec2 local = fract(FRAGCOORD.xy / cs); // position du pixel dans sa cellule (0..1)
+		vec2 center_uv = (cell_origin + 0.5 * cs) * texel;
+		// Ciel / fond : profondeur brute nulle en Z inversé.
+		bool is_sky = texture(depth_texture, center_uv).r <= 0.0;
 
 		// -----------------------------------------------------------------
-		// 2. Couleur moyenne de la cellule (centre + 4 échantillons en diagonale)
+		// 2. Luminance 3x3 de la cellule (une valeur par sous-région) + couleur moyenne
 		// -----------------------------------------------------------------
-		vec2 q = vec2(cs * 0.25) * texel;
-		vec3 col = texture(screen_texture, center_uv).rgb;
-		col += texture(screen_texture, center_uv + vec2(-q.x, -q.y)).rgb;
-		col += texture(screen_texture, center_uv + vec2( q.x, -q.y)).rgb;
-		col += texture(screen_texture, center_uv + vec2(-q.x,  q.y)).rgb;
-		col += texture(screen_texture, center_uv + vec2( q.x,  q.y)).rgb;
-		col /= 5.0;
-
-		// La texture d'écran est en linéaire : on repasse en perceptuel (~gamma 2.2)
-		// pour que la rampe se répartisse comme l'œil perçoit la luminosité.
-		float lum = dot(col, LUMA);
-		float perceptual = pow(clamp(lum * luminance_gain, 0.0, 1.0), 1.0 / 2.2);
-
-		// -----------------------------------------------------------------
-		// 3. Luminance -> palier de la rampe de la surface -> colonne de l'atlas
-		// -----------------------------------------------------------------
-		// La courbe de contraste ne sert qu'au choix du glyphe : la couleur garde
-		// la luminosité d'origine, donc les zones moyennes restent lisibles.
-		float ramp_value = pow(perceptual, ramp_contrast);
-
-		int surface = surface_at(center_uv);
-		int row = 0; // défaut et personnage : rampe classique
-		if (enable_surface_glyphs && (surface == SURFACE_FLOOR || surface == SURFACE_WALL)) {
-			row = surface;
-		}
-		// Palier 0 (vide) uniquement sous le même seuil que la rampe par défaut,
-		// puis le reste de la plage est réparti sur les paliers visibles. Sinon
-		// une rampe courte (4 paliers) laisserait vides les zones peu éclairées.
-		int tiers = max(tier_count[row], 1);
-		float blank = 1.0 / float(max(tier_count[0], 1));
-		int tier = 0;
-		if (ramp_value >= blank) {
-			float t = (ramp_value - blank) / (1.0 - blank);
-			if (row != 0) {
-				// Les surfaces n'occupent qu'une partie de la plage de luminosité :
-				// on l'étale pour profiter de tous leurs paliers.
-				t = clamp(t * surface_ramp_gain, 0.0, 1.0);
+		float v[9];
+		vec3 col = vec3(0.0);
+		float mean = 0.0;
+		for (int y = 0; y < 3; y++) {
+			for (int x = 0; x < 3; x++) {
+				vec2 uv = (cell_origin + (vec2(float(x), float(y)) + 0.5) * (cs / 3.0)) * texel;
+				vec3 c = texture(screen_texture, uv).rgb;
+				col += c;
+				float t = tonemap(dot(c, LUMA));
+				if (!is_sky) {
+					t = mix(dark_floor, 1.0, t);
+				}
+				v[y * 3 + x] = t;
+				mean += t;
 			}
-			tier = clamp(1 + int(t * float(tiers - 1)), 1, max(tiers - 1, 1));
 		}
-		int tier_index = row * MAX_TIERS + tier;
-		int variants = max(tier_variants[tier_index], 1);
-		int variant = min(int(cell_hash(cell) * float(variants)), variants - 1);
-		int column = tier_start[tier_index] + variant;
-		bool is_edge = false;
+		col /= 9.0;
+		mean /= 9.0;
+		float variance = 0.0;
+		for (int i = 0; i < 9; i++) {
+			variance += (v[i] - mean) * (v[i] - mean);
+		}
+		variance /= 9.0;
 
 		// -----------------------------------------------------------------
-		// 4. Contours : Sobel 3x3 sur la profondeur linéaire et sur les normales.
-		//    Les échantillons sont espacés d'une demi-cellule : la grille 3x3
-		//    couvre exactement la cellule courante.
+		// 3. Glyphe de base : rampe (cellule uniforme) ou correspondance de forme
 		// -----------------------------------------------------------------
-		if (enable_edges) {
+		int glyph;
+		if (!use_shape_matching || variance < flat_threshold) {
+			int level = clamp(int(mean * float(ramp_count - 1) + 0.5), 0, ramp_count - 1);
+			glyph = ramp[level];
+		} else {
+			// Écarts amplifiés autour de la moyenne pour favoriser les formes.
+			vec4 ea = vec4(v[0], v[1], v[2], v[3]);
+			vec4 eb = vec4(v[4], v[5], v[6], v[7]);
+			float ec = v[8];
+			ea = clamp(mean + (ea - mean) * shape_contrast, 0.0, 1.0);
+			eb = clamp(mean + (eb - mean) * shape_contrast, 0.0, 1.0);
+			ec = clamp(mean + (ec - mean) * shape_contrast, 0.0, 1.0);
+			float best = 1e9;
+			glyph = 0;
+			for (int g = 0; g < glyph_count; g++) {
+				vec4 da = ea - glyph_shape[g * 3];
+				vec4 db = eb - glyph_shape[g * 3 + 1];
+				float dc = ec - glyph_shape[g * 3 + 2].x;
+				float d = dot(da, da) + dot(db, db) + dc * dc;
+				if (d < best) {
+					best = d;
+					glyph = g;
+				}
+			}
+		}
+
+		// -----------------------------------------------------------------
+		// 4. Contours géométriques et traits orientés
+		// -----------------------------------------------------------------
+		bool is_edge = false;
+		if (enable_edges || enable_strokes) {
+			// Profondeur et normales sur une grille 3x3 espacée d'une demi-cellule.
 			vec2 h = vec2(cs * 0.5) * texel;
 			float d[9];
 			vec3 n[9];
@@ -235,77 +223,82 @@ void fragment() {
 					n[k] = view_normal(uv);
 				}
 			}
-			// Indices :  0 1 2
-			//            3 4 5
-			//            6 7 8
-			float gxd = (d[2] + 2.0 * d[5] + d[8]) - (d[0] + 2.0 * d[3] + d[6]);
-			float gyd = (d[6] + 2.0 * d[7] + d[8]) - (d[0] + 2.0 * d[1] + d[2]);
-			// Gradient relatif à la profondeur du centre : un même seuil marche
-			// de près comme de loin.
-			gxd /= d[4];
-			gyd /= d[4];
+			// Indices :  0 1 2 / 3 4 5 / 6 7 8
+			float gxd = ((d[2] + 2.0 * d[5] + d[8]) - (d[0] + 2.0 * d[3] + d[6])) / d[4];
+			float gyd = ((d[6] + 2.0 * d[7] + d[8]) - (d[0] + 2.0 * d[1] + d[2])) / d[4];
 			float depth_mag = length(vec2(gxd, gyd));
-
 			vec3 gxn = (n[2] + 2.0 * n[5] + n[8]) - (n[0] + 2.0 * n[3] + n[6]);
 			vec3 gyn = (n[6] + 2.0 * n[7] + n[8]) - (n[0] + 2.0 * n[1] + n[2]);
-			float normal_mag = sqrt(dot(gxn, gxn) + dot(gyn, gyn));
+			float normal_mag2 = dot(gxn, gxn) + dot(gyn, gyn);
+			vec3 J_normal = normal_mag2 > 1e-6
+				? vec3(dot(gxn, gxn), dot(gyn, gyn), dot(gxn, gyn)) / normal_mag2
+				: vec3(0.0);
 
-			bool depth_edge = depth_mag > edge_threshold_depth;
-			bool normal_edge = normal_mag > edge_threshold_normal;
+			bool depth_edge = enable_edges && depth_mag > edge_threshold_depth;
+			bool normal_edge = enable_edges && sqrt(normal_mag2) > edge_threshold_normal;
 
 			if (depth_edge || normal_edge) {
-				// Orientation du gradient via un tenseur de structure (Jxx, Jyy, Jxy) :
-				// combine profondeur et normales sans souci de signe.
+				// 4a. Contour : orientation combinée profondeur + normales.
 				vec3 J = vec3(0.0);
 				if (depth_edge) {
 					vec2 g = vec2(gxd, gyd) / depth_mag;
 					J += vec3(g.x * g.x, g.y * g.y, g.x * g.y);
 				}
 				if (normal_edge) {
-					J += vec3(dot(gxn, gxn), dot(gyn, gyn), dot(gxn, gyn)) / (normal_mag * normal_mag);
+					J += J_normal;
 				}
-				// Angle du gradient dans [0, PI). Le trait du contour est perpendiculaire.
-				float theta = 0.5 * atan(2.0 * J.z, J.x - J.y);
-				if (theta < 0.0) {
-					theta += PI;
-				}
-				// Quantification sur 4 directions (axe Y écran vers le bas) :
-				// 0 : gradient horizontal -> trait vertical   "|"
-				// 1 : gradient bas-droite -> trait montant     "/"
-				// 2 : gradient vertical   -> trait horizontal  "-"
-				// 3 : gradient bas-gauche -> trait descendant  "\"
-				int dir = int(floor(theta / (PI * 0.25) + 0.5)) % 4;
-				row = 0;
-				column = edge_column + dir;
+				glyph = direction_glyph(J);
 				is_edge = true;
+			} else if (enable_strokes && !is_sky) {
+				// 4b. Trait orienté : tenseur de structure de la luminance, à
+				// partir des 4 gradients 2x2 de la grille 3x3. Les rayures
+				// (herbe, pierre striée) donnent des gradients de signes
+				// alternés mais d'orientation commune : le tenseur les cumule.
+				vec3 J_lum = vec3(0.0);
+				for (int qy = 0; qy < 2; qy++) {
+					for (int qx = 0; qx < 2; qx++) {
+						int i = qy * 3 + qx;
+						float gx = 0.5 * ((v[i + 1] + v[i + 4]) - (v[i] + v[i + 3]));
+						float gy = 0.5 * ((v[i + 3] + v[i + 4]) - (v[i] + v[i + 1]));
+						J_lum += vec3(gx * gx, gy * gy, gx * gy);
+					}
+				}
+				float trace = J_lum.x + J_lum.y;
+				float strength = sqrt(trace * 0.25);
+				float coherence = trace > 1e-6
+					? sqrt((J_lum.x - J_lum.y) * (J_lum.x - J_lum.y) + 4.0 * J_lum.z * J_lum.z) / trace
+					: 0.0;
+				if (strength > stroke_threshold && coherence > stroke_coherence) {
+					glyph = direction_glyph(J_lum / trace + J_normal * stroke_normal_weight);
+				}
 			}
 		}
 
 		// -----------------------------------------------------------------
-		// 5. Lecture du glyphe dans l'atlas, à la position locale du pixel
+		// 5. Masque du glyphe dans l'atlas, à la position locale du pixel
 		// -----------------------------------------------------------------
-		vec2 atlas_uv = vec2(
-			(float(column) + local.x) / float(atlas_columns),
-			(float(row) + local.y) / float(atlas_rows));
-		float mask = fine ? texture(glyph_atlas_fine, atlas_uv).a : texture(glyph_atlas, atlas_uv).a;
+		vec2 atlas_uv = vec2((float(glyph) + local.x) / float(glyph_count), local.y);
+		float mask = texture(glyph_atlas, atlas_uv).a;
 
 		// -----------------------------------------------------------------
-		// 6. Couleur finale = masque × couleur de la cellule (fond noir)
+		// 6. Couleur : palette naturelle désaturée, lumières chaudes vives
 		// -----------------------------------------------------------------
-		// Luminosité perçue du glyphe (le glyphe porte déjà l'info de densité,
-		// donc on peut éclaircir franchement la couleur).
-		float brightness = clamp(perceptual * color_boost, 0.0, 1.0);
+		float brightness = clamp(mean * color_boost, 0.0, 1.0);
 		if (is_edge) {
 			brightness = clamp(max(brightness * edge_brightness, edge_min_brightness), 0.0, 1.0);
 		}
 
 		vec3 tint;
 		if (use_color) {
-			// Teinte normalisée (composante max = 1) puis saturation renforcée.
+			// Teinte normalisée (composante max = 1).
 			float m = max(col.r, max(col.g, col.b));
 			vec3 hue = m > 1e-5 ? col / m : vec3(1.0);
-			hue = max(mix(vec3(dot(hue, LUMA)), hue, saturation_boost), vec3(0.0));
-			tint = hue;
+			// Saturation faible pour le décor, forte pour les zones très
+			// lumineuses (lanterne, cristal, lune) qui ressortent.
+			float highlight = smoothstep(0.55, 1.0, 1.0 - exp(-dot(col, LUMA) * exposure));
+			float sat = mix(saturation, highlight_saturation, highlight);
+			hue = max(mix(vec3(dot(hue, LUMA)), hue, sat), vec3(0.0));
+			tint = hue * global_tint;
 		} else {
 			tint = mono_color;
 		}

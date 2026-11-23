@@ -22,6 +22,3 @@ window/size/viewport_height=720
 renderer/rendering_method="forward_plus"
 anti_aliasing/quality/msaa_3d=0
 anti_aliasing/quality/screen_space_aa=0
-; Désactivé : il modifie la roughness écrite dans le buffer de normales,
-; or on s'en sert pour encoder l'identifiant de surface (voir README).
-anti_aliasing/screen_space_roughness_limiter/enabled=false
