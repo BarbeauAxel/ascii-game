@@ -10,6 +10,9 @@ extends CharacterBody3D
 ##     fortement réduits, déplacement ralenti ;
 ##   - à 0 PV : le soldat tombe, puis se relève au point de départ.
 ##
+## Retours d'impact : éclats d'os ou étincelles, micro-pause du jeu (« hit
+## stop ») et secousse de caméra par cellules entières.
+##
 ## Les actions sont déclarées avec des touches *physiques* : la touche en
 ## position "W" d'un clavier QWERTY est la touche "Z" d'un AZERTY, donc ZQSD
 ## et WASD fonctionnent sans configuration.
@@ -17,6 +20,7 @@ extends CharacterBody3D
 signal health_changed(health: float, max_health: float)
 
 const SOLDIER := preload("res://scripts/soldier.gd")
+const HIT_FX := preload("res://scripts/fx/hit_fx.gd")
 
 ## Vitesse de marche et de course (Maj maintenue), en m/s.
 @export var walk_speed := 3.2
@@ -76,8 +80,13 @@ func take_damage(amount: float, from: Vector3) -> void:
 	to_attacker.y = 0.0
 	if _blocking and _forward().dot(to_attacker.normalized()) > 0.3:
 		amount *= block_factor
+		# Étincelles sur le bouclier.
+		HIT_FX.burst(self, global_position + Vector3.UP * 1.1 + _forward() * 0.35, Color(1.0, 0.6, 0.2), 16, 3.5, 0.035, 0.35)
+		_shake(0.25)
 	else:
 		_knockback = -to_attacker.normalized() * 3.0
+		_shake(0.55)
+		_hit_stop(0.07)
 	health = maxf(health - amount, 0.0)
 	if _soldier:
 		_soldier.flash()
@@ -171,6 +180,7 @@ func _update_combat(delta: float) -> void:
 ## Touche tous les ennemis vivants dans l'arc frontal.
 func _strike() -> void:
 	var forward := _forward()
+	var hit := false
 	for enemy in get_tree().get_nodes_in_group("enemies"):
 		var e := enemy as Node3D
 		if e == null or not e.is_alive():
@@ -179,6 +189,25 @@ func _strike() -> void:
 		to.y = 0.0
 		if to.length() <= attack_reach and forward.dot(to.normalized()) >= attack_arc:
 			e.take_damage(attack_damage, global_position)
+			HIT_FX.burst(self, e.global_position + Vector3.UP * 1.1 - to.normalized() * 0.2, Color(0.9, 0.88, 0.8), 14)
+			hit = true
+	if hit:
+		_shake(0.3)
+		_hit_stop(0.05)
+
+
+## Micro-pause : le temps de jeu ralentit presque à l'arrêt quelques
+## centièmes de seconde (temps réel), ce qui donne du poids à l'impact.
+func _hit_stop(duration: float) -> void:
+	Engine.time_scale = 0.05
+	await get_tree().create_timer(duration, true, false, true).timeout
+	Engine.time_scale = 1.0
+
+
+func _shake(amount: float) -> void:
+	var camera := get_viewport().get_camera_3d()
+	if camera and camera.has_method("shake"):
+		camera.shake(amount)
 
 
 func _forward() -> Vector3:

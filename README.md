@@ -103,6 +103,7 @@ shaders/water.gdshader mare : vagues, paillettes de lune, ronds de pluie
 scripts/world/rain.gd  pluie (F3) : gouttes, éclaboussures, brouillard
 scripts/enemies/skeleton.gd  squelette : construction, animation, comportement
 scripts/enemies/enemy_spawner.gd  placement des squelettes
+scripts/fx/hit_fx.gd   éclats, étincelles, poussière (particules ponctuelles)
 scripts/camera_follow.gd   caméra isométrique orthographique, calage, zoom
 scripts/ascii_post_process.gd  pilote du quad : police, atlas, analyse, réglages
 scripts/glyph_atlas.gd rendu et analyse de l'atlas de glyphes
@@ -164,6 +165,15 @@ est aussi exécuté dans l'éditeur, on le voit donc dans la scène).
   l'ASCII, au lieu d'être converti en glyphes illisibles. Le texte se change
   dans `HUD/PlayerName`.
 
+## Objectif : vaincre les squelettes
+
+Il faut vaincre les 5 squelettes ; le compteur en haut de l'écran suit la
+progression. Un squelette vaincu s'effondre en tas d'os pour de bon : ses yeux
+s'éteignent et son âme s'échappe en particules bleues qui s'élèvent pendant
+quelques secondes. Quand les 5 sont vaincus, les cierges de l'autel
+s'embrasent, une colonne de lumière dorée s'élève et le message « La chapelle
+est purifiée » apparaît.
+
 ## Combat et squelettes
 
 - **Soldat** (`player.gd`) : 100 PV.
@@ -176,6 +186,10 @@ est aussi exécuté dans l'éditeur, on le voit donc dans la scène).
   - **Coup reçu** : éclat rouge et recul. À 0 PV, le soldat bascule sur le
     dos, puis réapparaît au point de départ au bout de 3 s.
   - **Barre de vie** sous le nom, dans le HUD.
+  - **Retours d'impact** (`scripts/fx/hit_fx.gd`) : éclats d'os quand on
+    touche, étincelles quand on pare, micro-pause du jeu de 50 à 70 ms et
+    secousse de caméra. La secousse se fait par cellules entières, donc le
+    décor saute d'une case sans scintiller (`shake_max_cells` sur la caméra).
 - **Squelettes** (`scripts/enemies/skeleton.gd`) : construits en code comme le
   soldat (crâne, mâchoire, cage thoracique en anneaux, vertèbres, os longs,
   haillons, épée rouillée), animés de façon procédurale avec une démarche
@@ -184,8 +198,8 @@ est aussi exécuté dans l'éditeur, on le voit donc dans la scène).
     joueur est à 9 m (la mâchoire claque), attaque armée au-dessus de la
     tête (0,55 s pour parer ou reculer), chancellement et léger recul quand
     ils sont touchés.
-  - **Mort** : effondrés en tas d'os, les yeux s'éteignent. Ils se relèvent
-    lentement au bout de 12 s.
+  - **Défaite** : effondrés en tas d'os pour de bon, les yeux s'éteignent et
+    l'âme s'échappe en particules bleues.
   - **Lisibilité** : os exagérés (2 à 3 fois l'épaisseur réelle) et légère
     lueur pâle. À 5 px par cellule, des os réalistes disparaîtraient.
   - **Ligne de vue** : un rayon physique vérifie qu'aucun mur, pilier ou

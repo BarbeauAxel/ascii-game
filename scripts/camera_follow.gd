@@ -26,6 +26,11 @@ extends Camera3D
 ## Cale la position de la caméra sur la grille de cellules (anti-scintillement).
 @export var snap_to_cells := true
 
+## Secousse maximale (en cellules) quand l'intensité vaut 1.
+@export var shake_max_cells := 2.0
+## Vitesse à laquelle la secousse s'éteint (par seconde).
+@export var shake_decay := 3.0
+
 @export_group("Zoom")
 ## Paliers de zoom : hauteur visible à l'écran, en mètres.
 @export var zoom_levels: Array[float] = [7.0, 9.0, 12.0, 15.0, 19.0, 24.0]
@@ -37,6 +42,7 @@ var _target: Node3D
 var _post: Node
 var _focus := Vector3.ZERO   # point suivi (lissé)
 var _size := 12.0            # hauteur visible actuelle (lissée)
+var _trauma := 0.0           # intensité de la secousse (0..1)
 
 
 func _ready() -> void:
@@ -64,7 +70,13 @@ func _unhandled_input(event: InputEvent) -> void:
 
 
 # En _physics_process pour rester synchronisée avec le CharacterBody3D (pas de saccades).
+## Secousse (coups reçus, impacts). Les intensités s'additionnent, plafonnées à 1.
+func shake(amount: float) -> void:
+	_trauma = clampf(_trauma + amount, 0.0, 1.0)
+
+
 func _physics_process(delta: float) -> void:
+	_trauma = move_toward(_trauma, 0.0, shake_decay * delta)
 	if _target:
 		_focus = _focus.lerp(_target.global_position, 1.0 - exp(-follow_smoothing * delta))
 	var wanted := zoom_levels[zoom_index]
@@ -92,6 +104,12 @@ func _update_transform() -> void:
 	var look_point := _focus + Vector3.UP * look_height
 	if snap_to_cells:
 		look_point = _snap_to_grid(look_point, right, up)
+	# Secousse par cellules entières : l'image saute d'une case à l'autre au
+	# lieu de glisser, donc les glyphes du décor ne scintillent pas.
+	if _trauma > 0.0:
+		var amp := _trauma * _trauma * shake_max_cells
+		var cell := _cell_world()
+		look_point += right * roundf(randf_range(-amp, amp)) * cell + up * roundf(randf_range(-amp, amp)) * cell
 
 	global_transform = Transform3D(Basis(right, up, back), look_point + back * camera_distance)
 
@@ -99,15 +117,22 @@ func _update_transform() -> void:
 ## Arrondit la position du point visé, dans le plan de l'écran, au multiple le
 ## plus proche de la taille d'une cellule exprimée en mètres.
 func _snap_to_grid(point: Vector3, right: Vector3, up: Vector3) -> Vector3:
-	var viewport_height := get_viewport().get_visible_rect().size.y
-	var cell_pixels := 5
-	if _post and "cell_size" in _post:
-		cell_pixels = _post.cell_size
-	if viewport_height <= 0.0:
+	var cell_world := _cell_world()
+	if cell_world <= 0.0:
 		return point
-	var cell_world := _size * float(cell_pixels) / viewport_height
 	var a := point.dot(right)
 	var b := point.dot(up)
 	var snapped_a := roundf(a / cell_world) * cell_world
 	var snapped_b := roundf(b / cell_world) * cell_world
 	return point + right * (snapped_a - a) + up * (snapped_b - b)
+
+
+## Taille d'une cellule, en mètres, dans le plan de l'écran.
+func _cell_world() -> float:
+	var viewport_height := get_viewport().get_visible_rect().size.y
+	if viewport_height <= 0.0:
+		return 0.0
+	var cell_pixels := 5
+	if _post and "cell_size" in _post:
+		cell_pixels = _post.cell_size
+	return _size * float(cell_pixels) / viewport_height

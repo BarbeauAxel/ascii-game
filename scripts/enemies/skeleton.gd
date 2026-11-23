@@ -9,8 +9,8 @@ extends CharacterBody3D
 ##   ATTAQUE   : armé au-dessus de la tête, puis coup vers le bas ; le joueur
 ##               n'est touché que s'il est encore devant et à portée ;
 ##   CHANCELLE : touché, il recule (recul + éclat blanc) ;
-##   À TERRE   : effondré en tas d'os ; après `reassemble_time` secondes, il
-##               se relève, ses points de vie restaurés.
+##   VAINCU    : effondré en tas d'os pour de bon ; son âme s'échappe en
+##               particules bleues qui s'élèvent quelques secondes.
 ##
 ## Les os sont exagérés (2 à 3 fois l'épaisseur réelle) : à 5 px par
 ## cellule, un os réaliste tiendrait dans moins d'une cellule et disparaîtrait.
@@ -19,6 +19,8 @@ extends CharacterBody3D
 ## un mur, il longe l'obstacle quelques instants). Pas de navmesh.
 
 signal died
+## Durée pendant laquelle l'âme s'échappe après la défaite (secondes).
+const SOUL_TIME := 3.5
 
 @export var max_health := 30.0
 @export var walk_speed := 1.0
@@ -27,12 +29,12 @@ signal died
 @export var attack_range := 1.5
 @export var attack_damage := 12.0
 @export var wander_radius := 4.0
-## Temps passé à terre avant de se relever (secondes).
-@export var reassemble_time := 12.0
 @export var bone_color := Color(0.8, 0.76, 0.64)
 @export var eye_color := Color(1.0, 0.35, 0.08)
 ## Lueur propre des os (0 = aucune).
 @export var bone_glow := 0.18
+## Couleur de l'âme qui s'échappe à la défaite (particules).
+@export var soul_color := Color(0.6, 0.85, 1.0)
 
 enum State { WANDER, CHASE, ATTACK, STAGGER, DEAD }
 
@@ -64,6 +66,8 @@ var _last_seen := Vector3.ZERO
 var _lost_time := 0.0
 var _gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity")
 var _collision: CollisionShape3D
+# Âme qui s'échappe à la défaite : particules bleues qui montent.
+var _wisps: CPUParticles3D
 
 # Squelette visuel
 var _visual: Node3D
@@ -110,6 +114,7 @@ func _ready() -> void:
 	add_child(_collision)
 
 	_make_materials()
+	_make_soul_fx()
 	_visual = Node3D.new()
 	_visual.name = "Visual"
 	add_child(_visual)
@@ -132,7 +137,10 @@ func take_damage(amount: float, from: Vector3) -> void:
 	_knockback = push.normalized() * 2.0
 	if health <= 0.0:
 		_set_state(State.DEAD)
-		_collision.set_deferred("disabled", true)
+		# Plus d'obstacle pour les autres (le joueur passe sur le tas d'os),
+		# mais la collision avec le sol reste : sinon la gravité l'entraînerait
+		# sous la terre.
+		set_deferred("collision_layer", 0)
 		died.emit()
 	else:
 		_set_state(State.STAGGER)
@@ -216,11 +224,7 @@ func _physics_process(delta: float) -> void:
 			if _state_time >= 0.45:
 				_set_state(State.CHASE)
 		State.DEAD:
-			if _state_time >= reassemble_time:
-				health = max_health
-				_collision.disabled = false
-				_set_state(State.WANDER)
-				_wander_target = home
+			pass
 
 	# Contournement : s'il bute contre un mur, il le longe un moment.
 	if _avoid_time > 0.0:
@@ -266,9 +270,8 @@ func _process(delta: float) -> void:
 	var speed := Vector2(velocity.x, velocity.z).length()
 	_walk = lerpf(_walk, clampf(speed / 1.4, 0.0, 1.0), 1.0 - exp(-8.0 * delta))
 	_phase = fmod(_phase + speed / 1.3 * TAU * delta, TAU)
-	var target_collapse := 1.0 if state == State.DEAD and _state_time < reassemble_time - 1.2 else 0.0
-	# S'effondre vite, se relève lentement.
-	_collapse = move_toward(_collapse, target_collapse, delta * (4.0 if target_collapse > 0.5 else 0.9))
+	var target_collapse := 1.0 if state == State.DEAD else 0.0
+	_collapse = move_toward(_collapse, target_collapse, delta * 4.0)
 	_flash = move_toward(_flash, 0.0, delta * 5.0)
 
 	var s := sin(_phase)
@@ -327,8 +330,11 @@ func _process(delta: float) -> void:
 	for m in _materials:
 		m.emission_energy_multiplier = _flash * 1.5
 	# Lueur pâle permanente des os : de nuit, ils se détachent du décor sombre.
-	_m_bone.emission_energy_multiplier += bone_glow * (1.0 - k * 0.6)
-	_m_eye.emission_energy_multiplier = lerpf(6.0, 0.3, k)
+	_m_bone.emission_energy_multiplier += bone_glow
+
+	# Vaincu : les yeux s'éteignent et l'âme s'échappe quelques secondes.
+	_m_eye.emission_energy_multiplier = lerpf(6.0, 0.0, k)
+	_wisps.emitting = state == State.DEAD and _state_time < SOUL_TIME
 
 
 # --- Construction ---------------------------------------------------------------------
@@ -403,6 +409,34 @@ func _build() -> void:
 			_mesh(sword, _box(Vector3(0.16, 0.022, 0.025)), _m_rust, Vector3(0, -0.065, 0))
 			_mesh(sword, _box(Vector3(0.055, 0.62, 0.015)), _m_rust, Vector3(0, -0.39, 0))
 			_mesh(sword, _box(Vector3(0.03, 0.05, 0.01)), _m_rust, Vector3(0.008, -0.72, 0), Vector3(0, 0, 0.5))
+
+
+func _make_soul_fx() -> void:
+	_wisps = CPUParticles3D.new()
+	_wisps.emitting = false
+	_wisps.amount = 24
+	_wisps.lifetime = 2.2
+	_wisps.emission_shape = CPUParticles3D.EMISSION_SHAPE_SPHERE
+	_wisps.emission_sphere_radius = 0.45
+	_wisps.direction = Vector3.UP
+	_wisps.spread = 15.0
+	_wisps.initial_velocity_min = 0.7
+	_wisps.initial_velocity_max = 1.3
+	_wisps.gravity = Vector3(0.0, 0.5, 0.0)
+	_wisps.scale_amount_min = 0.6
+	_wisps.scale_amount_max = 1.4
+	var mote := BoxMesh.new()
+	mote.size = Vector3.ONE * 0.05
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.albedo_color = soul_color
+	mat.roughness = 1.0
+	mote.material = mat
+	_wisps.mesh = mote
+	_wisps.layers = 1 | (1 << (FINE_LAYER - 1))
+	_wisps.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_wisps.position = Vector3(0, 0.35, 0)
+	add_child(_wisps)
 
 
 func _make_materials() -> void:

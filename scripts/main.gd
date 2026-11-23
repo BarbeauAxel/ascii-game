@@ -19,6 +19,12 @@ extends Node3D
 @onready var player_name: Label = $HUD/PlayerName
 @onready var health_back: ColorRect = $HUD/HealthBack
 @onready var health_fill: ColorRect = $HUD/HealthBack/HealthFill
+@onready var objective: Label = $HUD/Objective
+@onready var message: Label = $HUD/Message
+
+# Objectif : vaincre tous les squelettes.
+var _skeleton_total := 0
+var _defeated := 0
 
 ## Hauteur du nom au-dessus des pieds du personnage (mètres).
 const NAME_HEIGHT := 2.25
@@ -29,6 +35,13 @@ var _fps_timer := 0.0
 func _ready() -> void:
 	post.settings_changed.connect(_update_hud)
 	player.health_changed.connect(_on_health_changed)
+	# Les squelettes sont créés par Enemies (enfant prêt avant ce nœud).
+	for enemy in get_tree().get_nodes_in_group("enemies"):
+		if enemy.has_signal("died"):
+			enemy.died.connect(_on_skeleton_died)
+			_skeleton_total += 1
+	objective.visible = _skeleton_total > 0
+	_update_objective()
 	_update_hud()
 
 	# Arguments de debug après "--" (ex : godot --path . -- --no-ascii --no-edges)
@@ -82,6 +95,49 @@ func _place_name() -> void:
 	# Barre de vie juste sous le nom.
 	health_back.visible = player_name.visible
 	health_back.position = (screen + Vector2(-health_back.size.x * 0.5, player_name.size.y * 0.5 + 2.0)).round()
+
+
+func _on_skeleton_died() -> void:
+	_defeated += 1
+	_update_objective()
+	if _defeated >= _skeleton_total:
+		_victory()
+
+
+func _update_objective() -> void:
+	objective.text = "Squelettes vaincus : %d / %d" % [_defeated, _skeleton_total]
+
+
+## Tous les squelettes vaincus : les cierges s'embrasent, une colonne de
+## lumière s'élève de l'autel, message de victoire.
+func _victory() -> void:
+	for light in $Ruins.find_children("*", "OmniLight3D", true, false):
+		if "base_energy" in light:
+			light.base_energy *= 2.5
+		light.light_color = Color(1.0, 0.85, 0.6)
+		light.omni_range *= 1.6
+	var column := MeshInstance3D.new()
+	var cyl := CylinderMesh.new()
+	cyl.top_radius = 0.25
+	cyl.bottom_radius = 0.5
+	cyl.height = 14.0
+	column.mesh = cyl
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.albedo_color = Color(1.0, 0.85, 0.55)
+	mat.roughness = 1.0
+	column.material_override = mat
+	column.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	column.position = Vector3(0.0, 0.54 + 7.0, -15.0)
+	add_child(column)
+	var glow := OmniLight3D.new()
+	glow.light_color = Color(1.0, 0.8, 0.5)
+	glow.light_energy = 4.0
+	glow.omni_range = 12.0
+	glow.position = Vector3(0.0, 2.5, -14.0)
+	add_child(glow)
+	var tween := create_tween()
+	tween.tween_property(message, "modulate:a", 1.0, 1.5)
 
 
 func _on_health_changed(health: float, max_health: float) -> void:
