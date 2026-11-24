@@ -170,6 +170,15 @@ var _flash := 0.0
 var _down := 0.0
 var _down_target := 0.0
 var _all_materials: Array[StandardMaterial3D] = []
+# Réaction au coup reçu : direction de l'attaquant (repère du soldat) et
+# intensité qui retombe.
+var _hit_local := Vector3.FORWARD
+var _react := 0.0
+var _react_strength := 1.0
+# Roulade (esquive) : progression 0..1, -1 = aucune.
+var _roll_t := -1.0
+var _roll_duration := 0.5
+var _roll_backward := false
 var _cape_angle := 0.0
 var _cape_velocity := 0.0
 
@@ -455,6 +464,25 @@ func flash() -> void:
 
 
 ## À terre (mort) ou debout.
+## Réaction à un coup venu de `from` (position monde) : le corps part à
+## l'opposé. `strength` : 1 = coup encaissé, ~0.35 = coup paré.
+func hit_react(from: Vector3, strength := 1.0) -> void:
+	_hit_local = global_basis.inverse() * (from - global_position)
+	_hit_local.y = 0.0
+	_hit_local = _hit_local.normalized()
+	_react = 1.0
+	_react_strength = strength
+
+
+## Roulade (esquive) : avant, dans la direction où regarde le soldat, ou
+## arrière (`backward`) en gardant la face tournée vers l'ennemi.
+func play_roll(duration: float, backward := false) -> void:
+	_roll_duration = duration
+	_roll_backward = backward
+	_roll_t = 0.0
+	_attack_t = -1.0
+
+
 func set_down(on: bool) -> void:
 	_down_target = 1.0 if on else 0.0
 
@@ -503,7 +531,8 @@ func _animate_combat(delta: float) -> void:
 
 		# Buste, bassin
 		var torso: Vector2 = (a["torso"] as Vector2).lerp(b["torso"], strike)
-		_spine.rotation.x += torso.x * weight
+		# Rotation x positive = buste rejeté en arrière : « en avant » est négatif.
+		_spine.rotation.x -= torso.x * weight
 		_spine.rotation.y += torso.y * weight
 		var hips: Vector3 = (a["hips"] as Vector3).lerp(b["hips"], body)
 		_hips.rotation.y = lerpf(_hips.rotation.y, hips.x, weight)
@@ -522,7 +551,7 @@ func _animate_combat(delta: float) -> void:
 
 		# La tête compense la rotation du corps : le regard reste sur la cible.
 		_head.rotation.y -= (hips.x + torso.y) * 0.6 * weight
-		_head.rotation.x += 0.15 * torso.x * weight
+		_head.rotation.x += 0.4 * torso.x * weight
 		if t >= 1.0:
 			_attack_t = -1.0
 
@@ -531,11 +560,56 @@ func _animate_combat(delta: float) -> void:
 	for m in _all_materials:
 		m.emission_energy_multiplier = _flash * 1.2
 
+	# Réaction au coup : buste rejeté à l'opposé de l'attaquant (de face : en
+	# arrière ; de côté : plié de l'autre côté), tête qui suit, bras écartés.
+	_react = move_toward(_react, 0.0, delta * 2.8)
+	if _react > 0.0:
+		var r := _react * _react * _react_strength
+		_spine.rotation.x -= _hit_local.z * 0.55 * r
+		_spine.rotation.z += _hit_local.x * 0.45 * r
+		_head.rotation.x -= _hit_local.z * 0.45 * r
+		_head.rotation.z += _hit_local.x * 0.4 * r
+		_hips.position.y -= 0.06 * r
+		_shoulder[1].rotation.z += 0.45 * r
+		if _block <= 0.0:
+			_shoulder[0].rotation.z -= 0.45 * r
+
 	# À terre : basculé sur le dos.
 	_down = move_toward(_down, _down_target, delta * (2.5 if _down_target > 0.5 else 1.5))
 	var d := smoothstep(0.0, 1.0, _down)
 	rotation.x = PI * 0.47 * d
 	position.y = 0.18 * d
+
+	# Roulade : le corps se met en boule (cuisses ramenées, genoux pliés,
+	# buste enroulé, bras serrés) et fait un tour complet vers l'avant autour
+	# du bassin.
+	if _roll_t >= 0.0:
+		_roll_t += delta / _roll_duration
+		var t := minf(_roll_t, 1.0)
+		var tuck := smoothstep(0.0, 0.18, t) * (1.0 - smoothstep(0.8, 1.0, t))
+		for i in 2:
+			_thigh[i].rotation.x = lerpf(_thigh[i].rotation.x, 1.6, tuck)
+			_knee[i].rotation.x = lerpf(_knee[i].rotation.x, -2.1, tuck)
+			_ankle[i].rotation.x = lerpf(_ankle[i].rotation.x, 0.5, tuck)
+			_shoulder[i].rotation = _shoulder[i].rotation.lerp(Vector3(0.9, 0.0, (0.2 if i == 0 else -0.2)), tuck)
+			_elbow[i].rotation.x = lerpf(_elbow[i].rotation.x, 1.6, tuck)
+		_spine.rotation.x = lerpf(_spine.rotation.x, -0.9, tuck)
+		_head.rotation.x = lerpf(_head.rotation.x, -0.5, tuck)
+		_hips.position.y = lerpf(_hips.position.y, _hips_height - 0.35, tuck)
+		# Cape plaquée contre le dos (sinon son ressort s'emballe avec la vitesse).
+		_cape_angle = lerpf(_cape_angle, -0.15, tuck)
+		_cape_velocity = 0.0
+		_cape_top.rotation.x = _cape_angle - _spine.rotation.x
+		_cape_low.rotation.x = _cape_angle * 0.5
+		# Tour complet autour d'un pivot à hauteur du bassin replié (rotation x
+		# négative = la tête passe vers l'avant).
+		var angle := -TAU * smoothstep(0.08, 0.88, t) * (-1.0 if _roll_backward else 1.0)
+		var pivot := Vector3(0.0, 0.5, 0.0)
+		var spin := Basis(Vector3.RIGHT, angle)
+		transform = Transform3D(spin, pivot - spin * pivot)
+		if _roll_t >= 1.0:
+			_roll_t = -1.0
+			transform = Transform3D.IDENTITY
 
 
 func _make_materials() -> void:

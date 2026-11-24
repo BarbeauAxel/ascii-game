@@ -20,8 +20,10 @@ extends CharacterBody3D
 ## Les os sont exagérés (2 à 3 fois l'épaisseur réelle) : à 5 px par
 ## cellule, un os réaliste tiendrait dans moins d'une cellule et disparaîtrait.
 ##
-## Déplacements : direction directe + contournement simple (s'il bute contre
-## un mur, il longe l'obstacle quelques instants). Pas de navmesh.
+## Déplacements : chemins calculés sur la carte de navigation
+## (NavigationAgent3D, voir world/navigation.gd) pour contourner murs et
+## piliers. Si la carte n'est pas prête, direction directe ; s'il bute malgré
+## tout contre un obstacle, il le longe un instant.
 
 signal died
 signal health_changed(health: float, max_health: float)
@@ -59,6 +61,38 @@ const SOUL_TIME := 3.5
 
 enum State { WANDER, CHASE, ATTACK, STAGGER, DEAD, RISING }
 
+## Attaques, animées sur tout le corps (mêmes conventions que soldier.gd :
+## épaule x vers l'avant / le haut, y pivot gauche +, z écarté ; poignet ≈ -1
+## lame dans l'axe du bras ; buste x + = penché en avant ; bassin (rotation,
+## descente, roulis) ; jambes [cuisse G, genou G, cuisse D, genou D]).
+## Choisies au hasard, jamais deux fois la même de suite. Le rythme (armé,
+## impact, fin) vient de attack_windup / attack_strike / attack_end.
+## reach : portée ajoutée à attack_range ; arc : cosinus minimal (−0,15 =
+## très large) ; damage : facteur de attack_damage ; lunge : élan (m/s).
+const MOVES := [
+	{ # 0 : coup vertical, armé au-dessus de la tête, pas en avant
+		"reach": 0.4, "arc": 0.35, "damage": 1.0, "lunge": 0.0,
+		"start": {"arm": [Vector3(2.7, 0.0, 0.25), 0.9, 0.0], "off": [Vector3(0.6, 0.0, -0.4), 0.8],
+			"torso": Vector2(-0.25, 0.3), "hips": Vector3(-0.2, 0.0, 0.0), "legs": [0.1, -0.1, -0.15, -0.05]},
+		"end": {"arm": [Vector3(-0.3, 0.0, 0.0), 0.1, 0.0], "off": [Vector3(-0.3, 0.0, -0.5), 0.5],
+			"torso": Vector2(0.5, -0.45), "hips": Vector3(0.15, 0.15, 0.0), "legs": [-0.35, -0.25, 0.55, -0.7]},
+	},
+	{ # 1 : balayage horizontal, de droite à gauche
+		"reach": 0.9, "arc": -0.15, "damage": 0.7, "lunge": 0.0,
+		"start": {"arm": [Vector3(1.35, -1.35, 0.15), 0.4, -1.0], "off": [Vector3(0.35, 0.0, -0.55), 0.9],
+			"torso": Vector2(0.05, -0.65), "hips": Vector3(-0.45, 0.07, 0.05), "legs": [0.3, -0.4, -0.3, -0.3]},
+		"end": {"arm": [Vector3(1.45, 1.1, 0.0), 0.2, -1.0], "off": [Vector3(-0.45, 0.0, -0.4), 0.6],
+			"torso": Vector2(-0.1, 0.8), "hips": Vector3(0.5, 0.1, -0.06), "legs": [0.35, -0.5, -0.4, -0.25]},
+	},
+	{ # 2 : estoc, épée ramenée puis fente en avant
+		"reach": 1.1, "arc": 0.65, "damage": 0.85, "lunge": 4.5,
+		"start": {"arm": [Vector3(0.4, 0.25, 0.1), 1.6, -1.15], "off": [Vector3(0.7, 0.0, 0.0), 1.1],
+			"torso": Vector2(-0.05, 0.55), "hips": Vector3(-0.5, 0.08, 0.0), "legs": [0.2, -0.4, -0.3, -0.3]},
+		"end": {"arm": [Vector3(1.5, -0.1, 0.0), 0.05, -1.2], "off": [Vector3(-0.55, 0.0, -0.4), 0.4],
+			"torso": Vector2(0.45, -0.3), "hips": Vector3(0.2, 0.2, 0.0), "legs": [-0.6, -0.15, 0.7, -0.6]},
+	},
+]
+
 ## Calque « cellules fines » partagé avec le soldat (soldier.gd, FINE_LAYER).
 const FINE_LAYER := 3
 
@@ -83,12 +117,19 @@ var _los_timer := 0.0
 var _last_seen := Vector3.ZERO
 var _lost_time := 0.0
 var _rattle_timer := 0.0
-var _attack_kind := 0       # 0 = coup vertical, 1 = balayage (gardien)
-var _attacks_done := 0
+var _attack_kind := 0       # index dans MOVES
+var _last_kind := -1
+var _lunged := false
+# Réaction au coup reçu : direction de l'attaquant (repère du squelette) et
+# intensité qui retombe.
+var _hit_local := Vector3.FORWARD
+var _react := 0.0
 var _hits_taken := 0
 var _voice_pitch := 1.0     # sons plus graves pour un grand squelette
 var _gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity")
 var _collision: CollisionShape3D
+var _agent: NavigationAgent3D
+var _nav_target := Vector3.INF   # cible actuelle du calcul de chemin
 # Âme qui s'échappe à la défaite : particules bleues qui montent.
 var _wisps: CPUParticles3D
 
@@ -104,6 +145,7 @@ var _knee: Array[Node3D] = []
 var _ankle: Array[Node3D] = []
 var _shoulder: Array[Node3D] = []
 var _elbow: Array[Node3D] = []
+var _hand: Array[Node3D] = []
 var _phase := 0.0
 var _time := 0.0
 var _walk := 0.0
@@ -135,6 +177,11 @@ func _ready() -> void:
 	_collision.shape = capsule
 	_collision.position = Vector3(0, 0.875 * size_scale, 0)
 	add_child(_collision)
+	_agent = NavigationAgent3D.new()
+	_agent.path_desired_distance = 0.6
+	_agent.target_desired_distance = 0.5
+	_agent.path_max_distance = 2.0
+	add_child(_agent)
 	_voice_pitch = 1.0 / size_scale
 	# Boîte englobante lue par le shader ASCII (test de profondeur des cellules fines).
 	set_meta("fine_height", 2.1 * size_scale)
@@ -170,6 +217,11 @@ func take_damage(amount: float, from: Vector3) -> void:
 	var push := global_position - from
 	push.y = 0.0
 	_knockback = push.normalized() * 2.0 / size_scale
+	# Direction de l'attaquant dans le repère du squelette (avant = -Z).
+	_hit_local = (_visual.global_basis.inverse() * (from - global_position))
+	_hit_local.y = 0.0
+	_hit_local = _hit_local.normalized()
+	_react = 1.0
 	if health <= 0.0:
 		_set_state(State.DEAD)
 		# Plus d'obstacle pour les autres (le joueur passe sur le tas d'os),
@@ -229,12 +281,12 @@ func _physics_process(delta: float) -> void:
 			else:
 				var to_target := _wander_target - global_position
 				to_target.y = 0.0
-				if to_target.length() < 0.4:
+				if to_target.length() < 0.5:
 					var a := _rng.randf() * TAU
-					_wander_target = home + Vector3(cos(a), 0, sin(a)) * _rng.randf_range(0.5, wander_radius)
+					_wander_target = _reachable(home + Vector3(cos(a), 0, sin(a)) * _rng.randf_range(0.5, wander_radius))
 					_wander_wait = _rng.randf_range(1.0, 3.5)
 				else:
-					desired = to_target.normalized() * walk_speed
+					desired = _nav_direction(_wander_target) * walk_speed
 		State.CHASE:
 			if dist > sight_range * 1.6 or _lost_time > 2.5:
 				# Perdu de vue trop longtemps : retour au poste.
@@ -242,12 +294,15 @@ func _physics_process(delta: float) -> void:
 				_wander_target = home
 			elif dist < attack_range and _sees_player:
 				_set_state(State.ATTACK)
-				# Le gardien alterne coup vertical et balayage.
-				_attack_kind = _attacks_done % 2 if is_boss else 0
-				_attacks_done += 1
+				# Attaque tirée au hasard, différente de la précédente.
+				var choices: Array[int] = [0, 1, 2]
+				choices.erase(_last_kind)
+				_attack_kind = choices[_rng.randi() % choices.size()]
+				_last_kind = _attack_kind
+				_lunged = false
 				Sfx.play("rattle", global_position + Vector3.UP * 1.4, 2.0, 0.08, _voice_pitch)
 			elif _sees_player:
-				desired = to_player.normalized() * chase_speed
+				desired = _nav_direction(_player.global_position) * chase_speed
 				# Claquements d'os de temps en temps pendant la poursuite.
 				_rattle_timer -= delta
 				if _rattle_timer <= 0.0:
@@ -258,18 +313,21 @@ func _physics_process(delta: float) -> void:
 				var to_last := _last_seen - global_position
 				to_last.y = 0.0
 				if to_last.length() > 0.5:
-					desired = to_last.normalized() * chase_speed
+					desired = _nav_direction(_last_seen) * chase_speed
 		State.ATTACK:
 			face = to_player
+			var move: Dictionary = MOVES[_attack_kind]
+			# Fente : élan vers l'avant à la fin de l'armé.
+			if not _lunged and _state_time >= attack_windup and float(move["lunge"]) > 0.0:
+				_lunged = true
+				_knockback = -_visual.global_basis.z * float(move["lunge"])
 			if not _hit_done and _state_time >= attack_strike:
 				_hit_done = true
 				var forward := -_visual.global_basis.z
 				Sfx.play("swing", global_position + Vector3.UP * 1.5, 0.0, 0.08, _voice_pitch)
-				# Coup vertical : étroit, devant. Balayage : large arc, plus loin,
-				# un peu moins fort.
-				var reach := attack_range + (0.9 if _attack_kind == 1 else 0.4)
-				var arc := -0.15 if _attack_kind == 1 else 0.35
-				var damage := attack_damage * (0.7 if _attack_kind == 1 else 1.0)
+				var reach := attack_range + float(move["reach"])
+				var arc: float = move["arc"]
+				var damage := attack_damage * float(move["damage"])
 				if dist < reach and forward.dot(to_player.normalized()) > arc and _line_of_sight(1.0):
 					_player.take_damage(damage, global_position)
 			if _state_time >= attack_end:
@@ -304,6 +362,73 @@ func _physics_process(delta: float) -> void:
 	if face.length() > 0.01 and state != State.DEAD:
 		var yaw := atan2(-face.x, -face.z)
 		_visual.rotation.y = lerp_angle(_visual.rotation.y, yaw, 1.0 - exp(-8.0 * delta))
+
+
+## Applique la pose d'attaque à l'instant `t` (secondes depuis le début).
+func _apply_attack_pose(t: float) -> void:
+	var move: Dictionary = MOVES[_attack_kind]
+	var raise := smoothstep(0.0, attack_windup, t)
+	var strike := smoothstep(attack_windup, attack_strike, t)
+	# Bassin et jambes partent un peu avant le bras.
+	var body := smoothstep(attack_windup * 0.75, attack_strike * 0.92, t)
+	var weight := minf(raise, 1.0 - smoothstep(attack_strike + 0.15, attack_end, t))
+	var a: Dictionary = move["start"]
+	var b: Dictionary = move["end"]
+	var arm_a: Array = a["arm"]
+	var arm_b: Array = b["arm"]
+	_shoulder[1].rotation = _shoulder[1].rotation.lerp((arm_a[0] as Vector3).lerp(arm_b[0], strike), weight)
+	_elbow[1].rotation.x = lerpf(_elbow[1].rotation.x, lerpf(arm_a[1], arm_b[1], strike), weight)
+	_hand[1].rotation.x = lerpf(0.0, lerpf(arm_a[2], arm_b[2], strike), weight)
+	var off_a: Array = a["off"]
+	var off_b: Array = b["off"]
+	_shoulder[0].rotation = _shoulder[0].rotation.lerp((off_a[0] as Vector3).lerp(off_b[0], body), weight)
+	_elbow[0].rotation.x = lerpf(_elbow[0].rotation.x, lerpf(off_a[1], off_b[1], body), weight)
+	var torso: Vector2 = (a["torso"] as Vector2).lerp(b["torso"], strike)
+	# Rotation x positive = buste rejeté en arrière : « penché en avant » est négatif.
+	_spine.rotation.x -= torso.x * weight
+	_spine.rotation.y += torso.y * weight
+	var hips: Vector3 = (a["hips"] as Vector3).lerp(b["hips"], body)
+	_hips.rotation.y = lerpf(_hips.rotation.y, hips.x, weight)
+	_hips.rotation.z = lerpf(_hips.rotation.z, hips.z, weight)
+	_hips.position.y -= hips.y * weight
+	var legs_a: Array = a["legs"]
+	var legs_b: Array = b["legs"]
+	for i in 2:
+		var thigh := lerpf(legs_a[i * 2], legs_b[i * 2], body)
+		var knee := lerpf(legs_a[i * 2 + 1], legs_b[i * 2 + 1], body)
+		_thigh[i].rotation.x = lerpf(_thigh[i].rotation.x, thigh, weight)
+		_knee[i].rotation.x = lerpf(_knee[i].rotation.x, knee, weight)
+		_ankle[i].rotation.x = -(_thigh[i].rotation.x + _knee[i].rotation.x) * 0.8
+	_head.rotation.y -= (hips.x + torso.y) * 0.6 * weight
+	_head.rotation.x += 0.4 * torso.x * weight
+
+
+## Direction (horizontale, normalisée) vers `target` en suivant le chemin
+## calculé sur la carte de navigation. Le chemin n'est recalculé que si la
+## cible a bougé de plus de 0,5 m.
+func _nav_direction(target: Vector3) -> Vector3:
+	var direct := target - global_position
+	direct.y = 0.0
+	if _nav_target.distance_to(target) > 0.5:
+		_nav_target = target
+		_agent.target_position = target
+	if direct.length() < 1.2 or _agent.is_navigation_finished():
+		return direct.normalized()
+	var to_next := _agent.get_next_path_position() - global_position
+	to_next.y = 0.0
+	# Carte pas encore prête (ou point déjà atteint) : direction directe.
+	if to_next.length() < 0.05:
+		return direct.normalized()
+	return to_next.normalized()
+
+
+## Point de la carte de navigation le plus proche (une cible d'errance tirée
+## dans un mur est ramenée sur le sol praticable).
+func _reachable(point: Vector3) -> Vector3:
+	var map := get_world_3d().navigation_map
+	if NavigationServer3D.map_get_iteration_id(map) == 0:
+		return point
+	return NavigationServer3D.map_get_closest_point(map, point)
 
 
 ## Vrai si rien de solide (mur, pilier, rocher…) ne sépare le squelette du
@@ -369,34 +494,25 @@ func _process(delta: float) -> void:
 		_shoulder[i].rotation = Vector3(lerpf(arm + 0.1, 0.2, k), 0.0, lerpf(side * -0.12, side * -0.9, k))
 		_elbow[i].rotation.x = lerpf(0.35 + 0.3 * w, 0.1, k)
 
-	# Balayage (gardien) : bras tendu sur le côté, le buste pivote d'un coup.
-	if state == State.ATTACK and _attack_kind == 1:
-		var t := _state_time
-		var raise := smoothstep(0.0, attack_windup, t)
-		var strike := smoothstep(attack_windup, attack_strike, t)
-		var weight := 1.0 - smoothstep(attack_strike + 0.2, attack_end, t)
-		_shoulder[1].rotation.x = lerpf(_shoulder[1].rotation.x, 0.6, weight)
-		_shoulder[1].rotation.z = lerpf(_shoulder[1].rotation.z, 1.35, weight)
-		_elbow[1].rotation.x = lerpf(_elbow[1].rotation.x, 0.25, weight)
-		_spine.rotation.y += (0.9 * raise - 2.0 * strike) * weight
-		_spine.rotation.x += 0.15 * raise * weight
-	# Attaque (bras droit) : armé au-dessus de la tête, puis coup vers le bas.
-	elif state == State.ATTACK:
-		var t := _state_time
-		var raise := smoothstep(0.0, attack_windup, t)
-		var strike := smoothstep(attack_windup, attack_strike, t)
-		var back := smoothstep(attack_strike + 0.15, attack_end, t)
-		var weight := 1.0 - back
-		var sx := lerpf(lerpf(0.1, 2.7, raise), -0.3, strike)
-		_shoulder[1].rotation.x = lerpf(_shoulder[1].rotation.x, sx, weight)
-		_shoulder[1].rotation.z = lerpf(_shoulder[1].rotation.z, 0.25 * raise * (1.0 - strike), weight)
-		_elbow[1].rotation.x = lerpf(_elbow[1].rotation.x, lerpf(0.9, 0.1, strike), weight)
-		_spine.rotation.x += (0.25 * raise - 0.45 * strike) * weight
-		_spine.rotation.y += (0.3 * raise - 0.5 * strike) * weight
-	elif state == State.STAGGER:
-		var recoil := 1.0 - smoothstep(0.0, 0.45, _state_time)
-		_spine.rotation.x -= 0.5 * recoil
-		_head.rotation.x -= 0.4 * recoil
+	# Attaque : repos -> pose armée -> pose finale -> repos, sur tout le corps.
+	_hand[1].rotation = Vector3.ZERO
+	if state == State.ATTACK:
+		_apply_attack_pose(_state_time)
+
+	# Réaction au coup : le corps part à l'opposé de l'attaquant (frappé de
+	# face : buste rejeté en arrière ; de côté : il plie de l'autre côté),
+	# bras qui s'écartent. Plus marqué quand il chancelle.
+	_react = move_toward(_react, 0.0, delta * 2.6)
+	if _react > 0.0:
+		var r := _react * _react * (1.0 if state == State.STAGGER else 0.45)
+		_spine.rotation.x -= _hit_local.z * 0.7 * r
+		_spine.rotation.z += _hit_local.x * 0.6 * r
+		_head.rotation.x -= _hit_local.z * 0.5 * r
+		_head.rotation.z += _hit_local.x * 0.5 * r
+		_hips.position.y -= 0.05 * r
+		for i in 2:
+			var side := -1.0 if i == 0 else 1.0
+			_shoulder[i].rotation.z += side * 0.5 * r
 
 	# Éclat blanc quand il est touché ; yeux qui s'éteignent à terre.
 	for m in _materials:
@@ -496,6 +612,7 @@ func _build() -> void:
 		_mesh(hand, _box(Vector3(0.07, 0.1, 0.045)), _m_bone, Vector3(0, -0.04, 0))
 		_shoulder.append(shoulder)
 		_elbow.append(elbow)
+		_hand.append(hand)
 		if i == 1 and is_boss:
 			# Grande hache : long manche, fer en croissant, pointe.
 			var axe := _joint(hand, Vector3(0, -0.05, 0), Vector3(1.25, 0, 0))

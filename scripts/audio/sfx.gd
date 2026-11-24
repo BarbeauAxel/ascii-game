@@ -42,6 +42,7 @@ func _ready() -> void:
 	_streams["soul"] = _wav(_soul())
 	_streams["victory"] = _wav(_victory())
 	_streams["rumble"] = _wav(_rumble())
+	_streams["ignite"] = _wav(_ignite())
 	_ambience = _loop_player(_night_loop(), -16.0)
 	_rain = _loop_player(_rain_loop(), -80.0)
 	print("Sons synthétisés en %d ms" % (Time.get_ticks_msec() - t0))
@@ -193,6 +194,19 @@ func _soul() -> PackedFloat32Array:
 		phase2 += TAU * f * 1.5 / RATE
 		lp += 0.08 * (_noise() - lp)
 		d[i] = (sin(phase) * 0.35 + sin(phase2) * 0.12 + lp * 0.5) * env * 0.7
+	return d
+
+
+## Torche qui s'embrase : souffle qui s'ouvre (bruit dont le filtre monte),
+## puis crépitements.
+func _ignite() -> PackedFloat32Array:
+	var d := _buf(0.9)
+	var lp := 0.0
+	for i in d.size():
+		var t := float(i) / RATE
+		lp += lerpf(0.04, 0.3, smoothstep(0.0, 0.25, t)) * (_noise() - lp)
+		d[i] = lp * smoothstep(0.0, 0.08, t) * exp(-maxf(t - 0.15, 0.0) * 5.0) * 1.3
+	_add_clicks(d, 14, 0.1, 0.85, 0.35)
 	return d
 
 

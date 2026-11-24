@@ -114,7 +114,7 @@ func _build() -> void:
 	_title_box.add_child(_spacer(36))
 	_title_box.add_child(_label(
 		"ZQSD / WASD : se déplacer     Maj : courir     Espace : sauter\n" +
-		"Clic gauche / J : attaquer     Clic droit / K : parer\n" +
+		"Clic gauche / J : attaquer     Clic droit / K : parer     Ctrl : esquive\n" +
 		"Molette : zoom     F3 : pluie     Échap : pause",
 		8, PALE))
 	_title_box.add_child(_spacer(16))

@@ -27,6 +27,10 @@ const CELL_SIZES: Array[int] = [4, 5, 6, 7, 8, 10]
 ## directionnels | / - \ sont obligatoires (contours et traits orientés).
 ## Moins de glyphes = shader plus rapide (la correspondance de forme les teste tous).
 @export var glyph_set := " .,:;'`\"^~-_=+*!?/\\|()[]{}<>#%@&$ilIoOxXvVwWmMnNHT01"
+## Rendu « ponctuation » : lettres et chiffres retirés du jeu de glyphes. Les
+## surfaces se couvrent de . : ; + * # % @ … au lieu de « vvvv InnI ».
+## (Argument de debug `--letters` : les remettre, pour comparer.)
+@export var punctuation_only := true
 ## Nombre de niveaux visés pour la rampe de densité (les doublons sont retirés).
 @export_range(4, 32) var ramp_levels: int = 24
 ## Police imposée (optionnelle). Sinon : premier fichier de `fonts_dir`, puis police système.
@@ -202,6 +206,14 @@ func get_font_name() -> String:
 # --- Interne ----------------------------------------------------------------
 
 func _validate_glyph_set() -> void:
+	if punctuation_only and not "--letters" in OS.get_cmdline_user_args():
+		var kept := ""
+		for ch in glyph_set:
+			# Ni lettre (a une majuscule et une minuscule différentes) ni chiffre.
+			var code := ch.unicode_at(0)
+			if ch.to_lower() == ch.to_upper() and not (code >= 48 and code <= 57):
+				kept += ch
+		glyph_set = kept
 	if glyph_set.length() > MAX_GLYPHS:
 		push_warning("glyph_set : %d glyphes, tronqué à %d" % [glyph_set.length(), MAX_GLYPHS])
 		glyph_set = glyph_set.substr(0, MAX_GLYPHS)

@@ -11,6 +11,9 @@ extends CharacterBody3D
 ##     arc et ses dégâts (HITS) ; l'impact tombe sur l'image clé de l'animation ;
 ##   - parade (clic droit ou K, maintenu) : bouclier levé, dégâts reçus de face
 ##     fortement réduits, déplacement ralenti ;
+##   - esquive (Ctrl ou bouton du milieu) : roulade dans la direction des
+##     touches (en arrière sans direction), invulnérable pendant l'essentiel
+##     de la roulade, puis courte récupération ;
 ##   - à 0 PV : le soldat tombe, puis se relève au point de départ.
 ##
 ## Retours d'impact : éclats d'os ou étincelles, micro-pause du jeu (« hit
@@ -38,6 +41,11 @@ const HIT_FX := preload("res://scripts/fx/hit_fx.gd")
 @export var block_factor := 0.15
 @export var block_speed_factor := 0.4
 @export var respawn_delay := 3.0
+## Roulade : durée, vitesse, part de la durée sans dégâts, délai entre deux.
+@export var roll_duration := 0.5
+@export var roll_speed := 7.5
+@export var roll_invulnerable := 0.75
+@export var roll_cooldown := 0.35
 
 var gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity")
 var health := 0.0
@@ -61,6 +69,9 @@ var _last_kind := -1           # dernier coup donné (pour ne pas le répéter)
 var _queued := false           # clic reçu pendant un coup : enchaîner
 var _rng := RandomNumberGenerator.new()
 var _lunge := Vector3.ZERO
+var _roll_timer := -1.0        # temps écoulé dans la roulade, -1 = aucune
+var _roll_cooldown_left := 0.0
+var _roll_dir := Vector3.ZERO
 var _attack_hit_done := true
 var _blocking := false
 var _dead_timer := -1.0
@@ -94,6 +105,9 @@ func is_alive() -> bool:
 func take_damage(amount: float, from: Vector3) -> void:
 	if not is_alive():
 		return
+	# Roulade : le coup passe à côté.
+	if _roll_timer >= 0.0 and _roll_timer < roll_duration * roll_invulnerable:
+		return
 	var to_attacker := from - global_position
 	to_attacker.y = 0.0
 	if _blocking and _forward().dot(to_attacker.normalized()) > 0.3:
@@ -101,10 +115,14 @@ func take_damage(amount: float, from: Vector3) -> void:
 		# Étincelles sur le bouclier.
 		HIT_FX.burst(self, global_position + Vector3.UP * 1.1 + _forward() * 0.35, Color(1.0, 0.6, 0.2), 16, 3.5, 0.035, 0.35)
 		Sfx.play("block", global_position + Vector3.UP)
+		if _soldier:
+			_soldier.hit_react(from, 0.35)
 		_shake(0.25)
 	else:
 		_knockback = -to_attacker.normalized() * 3.0
 		Sfx.play("hurt", global_position + Vector3.UP)
+		if _soldier:
+			_soldier.hit_react(from, 1.0)
 		_shake(0.55)
 		_hit_stop(0.07)
 	health = maxf(health - amount, 0.0)
@@ -150,6 +168,8 @@ func _physics_process(delta: float) -> void:
 		velocity.y = jump_velocity
 
 	_update_combat(delta)
+	if _update_roll(delta):
+		return
 
 	# Direction voulue, relative à la caméra : "avant" = vers le haut de
 	# l'écran. Avec la vue isométrique (caméra tournée à 45°), c'est donc
@@ -215,6 +235,40 @@ func _random_move() -> int:
 	var choices: Array[int] = [0, 1, 2]
 	choices.erase(_last_kind)
 	return choices[_rng.randi() % choices.size()]
+
+
+## Roulade d'esquive. Retourne vrai tant qu'elle dure (elle remplace alors
+## le déplacement normal).
+func _update_roll(delta: float) -> bool:
+	_roll_cooldown_left -= delta
+	if _roll_timer < 0.0:
+		if Input.is_action_just_pressed("dodge") and _roll_cooldown_left <= 0.0 and is_on_floor() and _attack_timer < 0.0:
+			var input := Input.get_vector("move_left", "move_right", "move_forward", "move_back")
+			_roll_dir = _camera_relative(input).normalized()
+			if _roll_dir == Vector3.ZERO:
+				_roll_dir = -_forward() # sans direction : roulade en arrière
+				visual.rotation.y = atan2(_roll_dir.x, _roll_dir.z) # dos tourné à la roulade
+			else:
+				visual.rotation.y = atan2(-_roll_dir.x, -_roll_dir.z)
+			_roll_timer = 0.0
+			_blocking = false
+			if _soldier:
+				_soldier.set_blocking(false)
+				_soldier.play_roll(roll_duration, input == Vector2.ZERO)
+			Sfx.play("swing", global_position + Vector3.UP * 0.5, -6.0, 0.05, 0.6)
+		else:
+			return false
+	_roll_timer += delta
+	# Élan fort au début, qui retombe en fin de roulade.
+	var speed := roll_speed * (1.0 - smoothstep(0.55, 1.0, _roll_timer / roll_duration))
+	velocity.x = _roll_dir.x * speed
+	velocity.z = _roll_dir.z * speed
+	move_and_slide()
+	if _roll_timer >= roll_duration:
+		_roll_timer = -1.0
+		_roll_cooldown_left = roll_cooldown
+		Sfx.play("step", global_position, -4.0)
+	return true
 
 
 func _start_attack(kind: int) -> void:
@@ -296,6 +350,7 @@ func _setup_input_actions() -> void:
 	_add_action("run", [KEY_SHIFT])
 	_add_action("attack", [KEY_J], [MOUSE_BUTTON_LEFT])
 	_add_action("block", [KEY_K], [MOUSE_BUTTON_RIGHT])
+	_add_action("dodge", [KEY_CTRL, KEY_L], [MOUSE_BUTTON_MIDDLE])
 
 
 func _add_action(action: StringName, physical_keys: Array, mouse_buttons: Array = []) -> void:

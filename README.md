@@ -24,6 +24,7 @@ cimetière. Tout le décor est construit en code, sans asset importé.
 | Espace                     | Sauter                                  |
 | Clic gauche / J            | Attaquer (coup d'épée)                  |
 | Clic droit / K (maintenu)  | Parer (bouclier)                        |
+| Ctrl / L / bouton du milieu | Esquive : roulade (en arrière sans direction) |
 | Molette                    | Zoom par paliers                        |
 | F1                         | Effet ASCII on/off (comparer au rendu brut) |
 | F2                         | Contours et traits orientés on/off      |
@@ -62,6 +63,7 @@ avec `--write-movie` pour capturer des comparaisons.
 | `--no-fine`           | démarre sans les cellules fines des personnages |
 | `--no-enemies`        | démarre sans squelettes |
 | `--no-title`          | saute l'écran titre (aussi sauté avec `--hold=`) |
+| `--letters`           | remet les lettres dans le jeu de glyphes (comparer avec la ponctuation) |
 
 Mesurer les performances : `godot --path . --resolution 1920x1080 --disable-vsync --print-fps`.
 
@@ -104,6 +106,8 @@ scripts/world/flicker_light.gd   lumière de flamme vacillante
 shaders/grass.gdshader brins d'herbe : dégradé, vent
 shaders/water.gdshader mare : vagues, paillettes de lune, ronds de pluie
 scripts/world/rain.gd  pluie (F3) : gouttes, éclaboussures, brouillard
+scripts/world/navigation.gd  carte de navigation calculée au lancement
+scripts/world/torches.gd     torches que le héros allume en passant
 scripts/enemies/skeleton.gd  squelette : construction, animation, comportement
 scripts/enemies/enemy_spawner.gd  placement des squelettes
 scripts/fx/hit_fx.gd   éclats, étincelles, poussière (particules ponctuelles)
@@ -225,6 +229,7 @@ sinusoïdes et d'enveloppes. Ils sont stockés en AudioStreamWAV 16 bits mono à
 | `collapse` | squelette vaincu | cascade de clics + deux chocs sourds |
 | `soul` | âme qui s'échappe | voix aérienne qui monte, légèrement vibrée |
 | `rumble` | éveil du Gardien | grondement grave modulé + cliquetis |
+| `ignite` | torche qui s'embrase | souffle dont le filtre s'ouvre + crépitements |
 | `victory` | Gardien vaincu | cloche puis accord majeur |
 | ambiance | en boucle | vent par rafales + grillons |
 | pluie | en boucle, suit F3 | bruissement + impacts de gouttes |
@@ -271,6 +276,16 @@ modifient pas.
   - **Parade** (clic droit ou K, maintenu) : le bouclier passe devant le buste.
     Un coup reçu de face n'inflige que 15 % des dégâts, et l'on avance au
     ralenti sans se retourner.
+  - **Esquive** (Ctrl, L ou bouton du milieu) : roulade de 0,5 s dans la
+    direction des touches, ou en arrière sans direction, en gardant la face
+    tournée vers l'ennemi. Pendant les trois premiers quarts de la roulade,
+    les coups passent à côté. Elle est suivie d'une courte récupération.
+    Animation : le corps se met en boule et fait un tour complet autour du
+    bassin.
+  - **Réaction orientée** : le corps part à l'opposé de l'attaquant (frappé
+    de face, buste rejeté en arrière ; de côté, plié de l'autre côté), la
+    tête suit et les bras s'écartent. Un coup paré donne une réaction plus
+    légère.
   - **Coup reçu** : éclat rouge et recul. À 0 PV, le soldat bascule sur le
     dos, puis réapparaît au point de départ au bout de 3 s.
   - **Barre de vie** sous le nom, dans le HUD.
@@ -296,9 +311,28 @@ modifient pas.
     de l'impact (à 1 m). Quand ils le perdent de vue, ils vont voir là où ils
     l'ont aperçu pour la dernière fois, puis rentrent à leur poste au bout de
     2,5 s.
-  - **Déplacements** : contournement simple des murs, sans navmesh.
+  - **Attaques** : trois attaques animées sur tout le corps, comme celles du
+    héros : coup vertical avec pas en avant, balayage horizontal (large arc),
+    estoc avec fente. Elles sont tirées au hasard, jamais deux fois la même
+    de suite (`MOVES` dans `skeleton.gd`) ; le Gardien utilise les mêmes, en
+    plus lent et plus fort.
+  - **Réaction orientée** : ils partent à l'opposé du coup, nettement quand
+    ils chancellent et légèrement sinon (le Gardien).
+  - **Déplacements** : chemins calculés sur la carte de navigation
+    (NavigationAgent3D). Ils contournent murs et piliers, passent par le
+    portail et montent les marches de l'autel. Leurs cibles d'errance sont
+    ramenées sur le sol praticable.
 - **Postes** (`enemy_spawner.gd`) : deux dans la nef, deux au cimetière, un
   près de la mare.
+
+## Navigation (`scripts/world/navigation.gd`)
+
+Le décor étant construit en code, la carte de navigation est calculée au
+lancement, en 30 ms environ. Elle analyse les collisions des nœuds du groupe
+`navigation_source` (Ruins et Nature : sol, murs, piliers, tombes, arbres,
+rampe de l'autel) sur un carré de 68 m. Réglages : cellules de 0,25 m, rayon
+des personnages 0,5 m, marche franchissable 0,25 m. Le nœud Navigation doit
+rester après Ruins et Nature dans la scène.
 
 ## Le décor (`scripts/world/`)
 
@@ -337,6 +371,12 @@ scène.
 - **Lumières** : lune froide (ombres), lanterne au portail et cierges de
   l'autel qui vacillent (`flicker_light.gd`).
 - **Ambiance** : brouillard au ras du sol et occlusion ambiante (SSAO).
+- **Torches** (`torches.gd`) : 10 torches éteintes, en appliques sur les
+  murs, les piliers et le portail, et en piquets au cimetière. Elles
+  s'embrasent quand le héros passe à moins de 1,7 m : souffle et
+  crépitements (son `ignite`), flamme qui grandit puis ondule, lumière
+  vacillante qui monte en douceur, braises qui s'envolent. La ruine s'éclaire
+  au fil de l'exploration. Elles restent allumées jusqu'à R.
 - **Matières souples** : herbe, sol et buissons ont une rugosité de 1.0. Le
   shader ASCII ne les cerne jamais (`soft_roughness`), sinon chaque touffe
   deviendrait une boucle de contour. Les matériaux durs restent sous 0.99.
@@ -448,6 +488,14 @@ et à chaque changement de taille de cellule. Rien n'est stocké en binaire.
 Le jeu de glyphes candidats est `glyph_set` (propriété exportée du quad, 52
 glyphes par défaut). Le premier doit être l'espace, et `| / - \` sont
 obligatoires. Moins de glyphes = shader plus rapide.
+
+### Rendu « ponctuation » (par défaut)
+
+`punctuation_only` (sur `Camera3D/AsciiPostProcess`) retire les lettres et
+les chiffres du jeu de glyphes : il reste 33 glyphes et une rampe de 13
+niveaux (`` `.^':~+[%$@#``). Les murs et le dallage se couvrent de `. : + ~ [ #`
+au lieu de `vvvv InnI`, une texture plus calme. `--letters` remet les
+lettres pour comparer.
 
 ### Police
 
