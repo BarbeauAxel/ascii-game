@@ -174,7 +174,14 @@ func toggle_shape_matching() -> void:
 	settings_changed.emit()
 
 
-## Personnage en cellules fines on/off (F5).
+## Décalage de la grille de cellules (pixels), fourni par la caméra pour
+## accrocher la grille au monde.
+func set_grid_offset(offset: Vector2) -> void:
+	if _material:
+		_material.set_shader_parameter("grid_offset", offset)
+
+
+## Personnages en cellules fines on/off (F5).
 func toggle_fine() -> void:
 	fine_enabled = not fine_enabled
 	_apply_fine()

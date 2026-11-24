@@ -37,6 +37,12 @@ uniform int ramp[32];             // index de glyphes, du plus clair au plus den
 uniform ivec4 dir_glyphs;         // index des glyphes | / - \
 
 uniform int cell_size : hint_range(2, 32) = 5;
+// Décalage de la grille de cellules, en pixels (fourni par la caméra). La
+// caméra défile en douceur, au pixel près ; la grille se décale d'autant, si
+// bien qu'elle reste accrochée au monde : chaque morceau de décor garde la
+// même cellule, donc le même glyphe, sans que l'image saute de cellule en
+// cellule. Valeur réduite modulo 2520 (multiple de toutes les tailles de 2 à 10).
+uniform vec2 grid_offset = vec2(0.0);
 
 // --- Personnages en cellules fines (F5) ---
 // Masque : image d'une seconde caméra qui ne voit que les personnages (alpha
@@ -176,7 +182,8 @@ void fragment() {
 		bool fine = false;
 		if (fine_enabled) {
 			float fcs = float(fine_cell_size);
-			vec2 fuv = (floor(FRAGCOORD.xy / fcs) * fcs + 0.5 * fcs) * texel;
+			vec2 fp = FRAGCOORD.xy + grid_offset;
+			vec2 fuv = (floor(fp / fcs) * fcs + 0.5 * fcs - grid_offset) * texel;
 			if (texture(player_mask, fuv).a > 0.5) {
 				float fd = linear_depth(fuv, INV_PROJECTION_MATRIX);
 				for (int i = 0; i < character_count; i++) {
@@ -189,9 +196,11 @@ void fragment() {
 				}
 			}
 		}
-		vec2 cell = floor(FRAGCOORD.xy / cs);
-		vec2 cell_origin = cell * cs;
-		vec2 local = fract(FRAGCOORD.xy / cs); // position du pixel dans sa cellule (0..1)
+		// Grille accrochée au monde : position du pixel décalée de grid_offset.
+		vec2 grid_pos = FRAGCOORD.xy + grid_offset;
+		vec2 cell = floor(grid_pos / cs);
+		vec2 cell_origin = cell * cs - grid_offset; // coin de la cellule, en pixels écran
+		vec2 local = fract(grid_pos / cs); // position du pixel dans sa cellule (0..1)
 		vec2 center_uv = (cell_origin + 0.5 * cs) * texel;
 		// Ciel / fond : profondeur brute nulle en Z inversé.
 		bool is_sky = texture(depth_texture, center_uv).r <= 0.0;

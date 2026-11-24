@@ -69,7 +69,7 @@ func _ready() -> void:
 	if "--no-fine" in args:
 		post.toggle_fine()
 	if "--no-snap" in args:
-		$Camera3D.snap_to_cells = false
+		$Camera3D.snap_to_pixels = false
 	for arg in args:
 		if arg.begins_with("--debug-view="):
 			post.set_debug_view(arg.trim_prefix("--debug-view=").to_int())

@@ -52,7 +52,7 @@ avec `--write-movie` pour capturer des comparaisons.
 | `--no-ascii`           | démarre sans l'effet (rendu 3D brut) |
 | `--no-edges`           | démarre sans contours ni traits orientés |
 | `--no-shape`           | démarre sans correspondance de forme (rampe seule) |
-| `--no-snap`            | désactive le calage de la caméra sur la grille de cellules |
+| `--no-snap`            | grille fixe à l'écran (désactive l'accrochage au monde : le décor scintille) |
 | `--fps`                | affiche le compteur de FPS dès le départ |
 | `--zoom=<n>`           | palier de zoom initial (index dans `zoom_levels`) |
 | `--debug-view=1`       | affiche la luminance après tonemapping (pour régler la courbe) |
@@ -72,12 +72,16 @@ Mesurer les performances : `godot --path . --resolution 1920x1080 --disable-vsyn
 - **Projection orthographique** à angle fixe : `yaw_degrees = 45` (vue
   diagonale) et `pitch_degrees = 50` (plongée). Seul le point visé suit le
   joueur (lissage `follow_smoothing`).
-- **Calage sur la grille de cellules** (`snap_to_cells`) : la position de la
-  caméra, dans le plan de l'écran, est arrondie à un multiple exact de la
-  taille d'une cellule. Le décor glisse donc d'une case entière à la fois et
-  garde les mêmes glyphes au lieu de scintiller. Ça ne fonctionne qu'en
-  orthographique, où un déplacement de caméra décale l'image d'un nombre fixe
-  de pixels.
+- **Défilement fluide, grille accrochée au monde** (`snap_to_pixels`) : la
+  caméra suit le héros en douceur, calée seulement sur le pixel entier,
+  l'image se décalant d'un nombre entier de pixels sans rééchantillonnage. Le
+  shader ASCII décale sa grille de cellules d'autant (`grid_offset`, fourni
+  par la caméra) : la grille reste accrochée au monde, donc chaque morceau de
+  décor garde sa cellule et son glyphe sans scintiller, et l'image défile
+  pixel par pixel. Une première version calait la caméra sur des cellules
+  entières de 5 px : l'écran sautait par à-coups et paraissait trembler. Ça
+  ne fonctionne qu'en orthographique, où un déplacement de caméra décale
+  l'image d'un nombre fixe de pixels.
 - **Zoom à la molette par paliers** (`zoom_levels` : hauteur visible en mètres,
   7 à 24 m). La transition est lissée. Une fois le palier atteint, la taille est
   exacte et la grille redevient stable.

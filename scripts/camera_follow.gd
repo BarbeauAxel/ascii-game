@@ -2,14 +2,17 @@ extends Camera3D
 ## Caméra isométrique orthographique façon MMO RPG : angle fixe (orientation
 ## + plongée), suit la cible, zoom à la molette par paliers.
 ##
-## Stabilité des glyphes : en projection orthographique, un déplacement de la
-## caméra parallèle à l'écran décale l'image d'une quantité fixe de pixels. Si
-## l'on cale ce déplacement sur un multiple exact de la taille d'une cellule,
-## le décor glisse d'une case entière à la fois : chaque morceau de décor garde
-## le même glyphe d'une frame à l'autre, au lieu de scintiller.
+## Stabilité des glyphes, défilement fluide : en projection orthographique, un
+## déplacement de la caméra parallèle à l'écran décale l'image d'une quantité
+## fixe de pixels. On cale la caméra sur le pixel entier (l'image se décale
+## d'un nombre entier de pixels, sans rééchantillonnage), et on décale la
+## grille de cellules du shader ASCII d'autant (`grid_offset`) : la grille
+## reste accrochée au monde. Chaque morceau de décor garde sa cellule et son
+## glyphe (pas de scintillement), et l'image défile pixel par pixel au lieu de
+## sauter d'une cellule entière (5 px) à la fois.
 
 @export var target_path: NodePath
-## Quad ASCII : on lit sa taille de cellule pour caler la caméra sur la grille.
+## Quad ASCII : on lui transmet le décalage de grille (et on lit sa taille de cellule).
 @export var post_process_path: NodePath
 ## Orientation autour de l'axe vertical (45° = vue diagonale isométrique).
 @export_range(0.0, 360.0) var yaw_degrees := 45.0
@@ -23,8 +26,9 @@ extends Camera3D
 ## Recul de la caméra le long de son axe (orthographique : n'influence que le
 ## découpage near/far, pas la taille à l'écran).
 @export var camera_distance := 40.0
-## Cale la position de la caméra sur la grille de cellules (anti-scintillement).
-@export var snap_to_cells := true
+## Cale la caméra sur le pixel et accroche la grille ASCII au monde
+## (anti-scintillement). Désactivé : grille fixe à l'écran, le décor scintille.
+@export var snap_to_pixels := true
 
 ## Secousse maximale (en cellules) quand l'intensité vaut 1.
 @export var shake_max_cells := 2.0
@@ -102,37 +106,36 @@ func _update_transform() -> void:
 	var up := back.cross(right)                      # +Y caméra
 
 	var look_point := _focus + Vector3.UP * look_height
-	if snap_to_cells:
-		look_point = _snap_to_grid(look_point, right, up)
-	# Secousse par cellules entières : l'image saute d'une case à l'autre au
-	# lieu de glisser, donc les glyphes du décor ne scintillent pas.
-	if _trauma > 0.0:
-		var amp := _trauma * _trauma * shake_max_cells
-		var cell := _cell_world()
-		look_point += right * roundf(randf_range(-amp, amp)) * cell + up * roundf(randf_range(-amp, amp)) * cell
+	# Secousse, en pixels entiers (la grille suit, donc pas de scintillement).
+	var pixel := _pixel_world()
+	if _trauma > 0.0 and pixel > 0.0:
+		var amp := _trauma * _trauma * shake_max_cells * float(_cell_pixels())
+		look_point += right * roundf(randf_range(-amp, amp)) * pixel + up * roundf(randf_range(-amp, amp)) * pixel
+
+	var offset := Vector2.ZERO
+	if snap_to_pixels and pixel > 0.0:
+		# Position de la caméra dans le plan de l'écran, en pixels entiers.
+		var a := roundf(look_point.dot(right) / pixel)
+		var b := roundf(look_point.dot(up) / pixel)
+		look_point += right * (a * pixel - look_point.dot(right)) + up * (b * pixel - look_point.dot(up))
+		# Caméra vers la droite de n px : l'image part à gauche de n px, la
+		# grille aussi. Vers le haut : l'image descend (y écran vers le bas).
+		offset = Vector2(fposmod(a, 2520.0), fposmod(-b, 2520.0))
+	if _post and _post.has_method("set_grid_offset"):
+		_post.set_grid_offset(offset)
 
 	global_transform = Transform3D(Basis(right, up, back), look_point + back * camera_distance)
 
 
-## Arrondit la position du point visé, dans le plan de l'écran, au multiple le
-## plus proche de la taille d'une cellule exprimée en mètres.
-func _snap_to_grid(point: Vector3, right: Vector3, up: Vector3) -> Vector3:
-	var cell_world := _cell_world()
-	if cell_world <= 0.0:
-		return point
-	var a := point.dot(right)
-	var b := point.dot(up)
-	var snapped_a := roundf(a / cell_world) * cell_world
-	var snapped_b := roundf(b / cell_world) * cell_world
-	return point + right * (snapped_a - a) + up * (snapped_b - b)
-
-
-## Taille d'une cellule, en mètres, dans le plan de l'écran.
-func _cell_world() -> float:
+## Taille d'un pixel, en mètres, dans le plan de l'écran.
+func _pixel_world() -> float:
 	var viewport_height := get_viewport().get_visible_rect().size.y
 	if viewport_height <= 0.0:
 		return 0.0
-	var cell_pixels := 5
+	return _size / viewport_height
+
+
+func _cell_pixels() -> int:
 	if _post and "cell_size" in _post:
-		cell_pixels = _post.cell_size
-	return _size * float(cell_pixels) / viewport_height
+		return _post.cell_size
+	return 5
