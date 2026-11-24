@@ -103,8 +103,8 @@ uniform float saturation : hint_range(0.0, 2.0) = 0.6;              // palette n
 uniform float highlight_saturation : hint_range(0.0, 3.0) = 1.4;    // sources de lumière : couleurs vives
 uniform vec3 global_tint : source_color = vec3(0.86, 0.9, 1.0);     // teinte globale (nuit légèrement bleutée)
 uniform float color_boost : hint_range(0.0, 4.0) = 1.15;            // luminosité des glyphes
-uniform float edge_brightness : hint_range(0.0, 4.0) = 1.25;
-uniform float edge_min_brightness : hint_range(0.0, 1.0) = 0.22;
+uniform float edge_brightness : hint_range(0.0, 4.0) = 0.8;    // < 1 : contours discrets, comme des joints
+uniform float edge_min_brightness : hint_range(0.0, 1.0) = 0.06;
 // Les glyphes de trait (| / - \) couvrent peu de pixels : on les éclaircit pour
 // que la cellule garde la luminosité moyenne de la zone. Densité de référence
 // (0 = pas de compensation) et gain maximal.
@@ -318,7 +318,9 @@ void fragment() {
 				glyph = direction_glyph(J);
 				is_edge = true;
 				is_line = true;
-			} else if (enable_strokes && !is_sky) {
+			} else if (enable_strokes && !is_sky && soft) {
+				// Traits réservés aux matières souples (herbe, sol, buissons) : sur
+				// la pierre, le grain de la texture les déclenchait en zébrures.
 				// 4b. Trait orienté : tenseur de structure de la luminance, à
 				// partir des 4 gradients 2x2 de la grille 3x3. Les rayures
 				// (herbe, pierre striée) donnent des gradients de signes
@@ -358,7 +360,7 @@ void fragment() {
 		if (is_edge) {
 			brightness = clamp(max(brightness * edge_brightness, edge_min_brightness), 0.0, 1.0);
 		}
-		if (is_line && line_density_target > 0.0) {
+		if (is_line && !is_edge && line_density_target > 0.0) {
 			float density = glyph_shape[glyph * 3 + 2].y;
 			brightness = clamp(brightness * clamp(line_density_target / max(density, 0.01), 1.0, line_max_gain), 0.0, 1.0);
 		}

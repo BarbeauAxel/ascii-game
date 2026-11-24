@@ -19,10 +19,10 @@ const MAX_GLYPHS := 128
 ## Taille max de la rampe (tableau `ramp` du shader).
 const MAX_RAMP := 32
 ## Tailles de cellule accessibles avec +/-.
-const CELL_SIZES: Array[int] = [4, 5, 6, 7, 8, 10]
+const CELL_SIZES: Array[int] = [3, 4, 5, 6, 7, 8, 10]
 
 ## Taille de cellule initiale (pixels).
-@export var cell_size: int = 5
+@export var cell_size: int = 3
 ## Glyphes candidats. Le premier doit être l'espace. Les quatre glyphes
 ## directionnels | / - \ sont obligatoires (contours et traits orientés).
 ## Moins de glyphes = shader plus rapide (la correspondance de forme les teste tous).

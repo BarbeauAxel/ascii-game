@@ -49,7 +49,7 @@ size = Vector2(2, 2)
 [sub_resource type="ShaderMaterial" id="Mat_ascii"]
 render_priority = 100
 shader = ExtResource("5_shader")
-shader_parameter/cell_size = 5
+shader_parameter/cell_size = 3
 shader_parameter/exposure = 5.0
 
 [node name="Main" type="Node3D"]

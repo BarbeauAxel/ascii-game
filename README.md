@@ -1,7 +1,7 @@
 # ASCII 3D Prototype (Godot 4.3+)
 
 Une vraie scène 3D (Forward+) convertie à l'écran en glyphes ASCII colorés par
-un shader de post-traitement haute densité (cellules de 5 px, correspondance
+un shader de post-traitement haute densité (cellules de 3 px, correspondance
 de forme, traits orientés). Un soldat en armure (heaume, plastron, cape,
 bouclier rond, épée longue), animé de façon procédurale, explore de nuit les
 ruines d'une chapelle gothique au milieu d'une prairie, avec arbres morts et
@@ -34,7 +34,7 @@ cimetière. Tout le décor est construit en code, sans asset importé.
 | F6                         | Afficher/masquer le HUD de debug (masqué par défaut) |
 | F7                         | Correspondance de forme on/off (sinon rampe de densité seule) |
 | F11                        | Plein écran                             |
-| `+` / `-` (ou pavé num.)   | Taille de cellule : 4, 5, 6, 7, 8, 10 px |
+| `+` / `-` (ou pavé num.)   | Taille de cellule : 3, 4, 5, 6, 7, 8, 10 px |
 | R                          | Recommencer la partie                   |
 | Curseur en bas à gauche    | Volume général (0 % par défaut, mémorisé) |
 | Échap                      | Pause (Reprendre / Recommencer / Quitter) |
@@ -157,7 +157,9 @@ est aussi exécuté dans l'éditeur, on le voit donc dans la scène).
 - **Métal à moitié** (`metallic` ≈ 0,45) pour la même raison.
 - Couleurs et intensités réglables dans l'inspecteur (`Player/Visual/Soldier`).
 - **Cellules fines (F5)** : tous les personnages (soldat, squelettes) sont
-  dessinés en cellules de 3 px, le décor en 5 px, d'où beaucoup plus de
+  dessinés en cellules de 3 px. C'est aujourd'hui aussi la taille du décor
+  (`cell_size` = 3), donc la passe fine n'agit que si l'on agrandit les
+  cellules avec +. À l'origine, le décor était en 5 px, d'où beaucoup plus de
   détail sur eux.
   - **Masque** : une caméra jumelle, dans un SubViewport qui suit exactement
     la caméra principale, ne voit que le calque « fin » (calque 3,
@@ -448,14 +450,14 @@ Override*. Les uniforms sont rangés par groupes.
 | | `edge_threshold_depth` | 3.0 | rupture de profondeur minimale, en cellules |
 | | `edge_threshold_normal` | 0.5 | pli minimal (1 − cos de l'angle ; 0.5 = 60°) |
 | | `soft_roughness` | 0.99 | rugosité au-delà de laquelle une surface n'est jamais cernée |
-| | `stroke_threshold` | 0.12 | force minimale du gradient pour un trait |
+| | `stroke_threshold` | 0.12 | force minimale du gradient pour un trait (matières souples seulement) |
 | | `stroke_coherence` | 0.65 | alignement minimal des gradients (0 à 1) |
 | | `stroke_normal_weight` | 0.5 | poids des normales dans l'orientation |
 | couleur | `saturation` | 0.6 | saturation du décor |
 | | `highlight_saturation` | 1.4 | saturation des sources de lumière |
 | | `global_tint` | bleu nuit léger | teinte globale |
 | | `color_boost` | 1.15 | luminosité des glyphes |
-| | `edge_brightness`, `edge_min_brightness` | 1.25 / 0.22 | luminosité des contours |
+| | `edge_brightness`, `edge_min_brightness` | 0.8 / 0.06 | luminosité des contours (< 1 : discrets, comme des joints) |
 | | `line_density_target`, `line_max_gain` | 0.35 / 2.0 | éclaircit les glyphes de trait, peu couvrants |
 | | `use_color`, `mono_color` | true / vert | rendu monochrome |
 | — | `debug_view` | 0 | 1 = luminance après tonemapping |
@@ -492,6 +494,20 @@ et à chaque changement de taille de cellule. Rien n'est stocké en binaire.
 Le jeu de glyphes candidats est `glyph_set` (propriété exportée du quad, 52
 glyphes par défaut). Le premier doit être l'espace, et `| / - \` sont
 obligatoires. Moins de glyphes = shader plus rapide.
+
+### Rendu détaillé (par défaut)
+
+- **Cellules de 3 px partout**, comme les personnages : le décor montre ses
+  blocs, joints, dalles et arcs au lieu d'une texture grossière. Le coût du
+  shader ne dépend presque pas de la taille des cellules, puisque chaque
+  pixel fait le même travail (environ 141 FPS en 1080p au zoom le plus large).
+  + et - permettent de revenir à 5 px ou plus.
+- **Contours discrets** : légèrement plus sombres que la surface, ils
+  dessinent les joints de la maçonnerie comme du mortier. Ils étaient
+  auparavant éclaircis et zébraient les murs.
+- **Traits orientés réservés aux matières souples** (herbe, sol, buissons).
+  Sur la pierre, le grain de la texture les déclenchait en traits verticaux
+  parasites.
 
 ### Rendu « ponctuation » (par défaut)
 
