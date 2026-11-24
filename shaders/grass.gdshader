@@ -11,8 +11,8 @@ uniform vec3 base_color : source_color = vec3(0.1, 0.13, 0.07);
 uniform vec3 tip_color : source_color = vec3(0.55, 0.64, 0.33);
 uniform vec3 dry_color : source_color = vec3(0.58, 0.52, 0.32);
 uniform vec2 wind_direction = vec2(1.0, 0.35);
-uniform float wind_strength : hint_range(0.0, 2.0) = 0.35;
-uniform float wind_speed : hint_range(0.0, 5.0) = 1.0;
+uniform float wind_strength : hint_range(0.0, 2.0) = 0.14;
+uniform float wind_speed : hint_range(0.0, 5.0) = 0.55;
 // Taille des rafales (mètres entre deux fronts de vent).
 uniform float gust_size = 7.0;
 
@@ -30,7 +30,7 @@ void vertex() {
 	float gust = sin(phase) * 0.5 + 0.5;
 	gust = gust * gust;
 	// Frémissement propre à chaque brin.
-	float flutter = sin(TIME * 4.0 + world.x * 3.1 + world.z * 2.3) * 0.12;
+	float flutter = sin(TIME * 2.2 + world.x * 3.1 + world.z * 2.3) * 0.05;
 	float bend = (0.25 + gust + flutter) * wind_strength * v_custom.z;
 
 	// Décalage horizontal en espace monde, croissant avec la hauteur (au carré :

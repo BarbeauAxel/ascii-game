@@ -328,7 +328,10 @@ func _build_altar() -> void:
 			_box(Vector3(x + w * 0.5, y * 0.5, z0 - depth * 0.5), Vector3(w - 0.03, y, depth - 0.03), Basis(), k == 2, _stone_tint(0.3))
 			x += w
 	# Rampe de collision invisible : un CharacterBody3D ne gravit pas les marches.
-	var run := step_d * 3.0
+	# La rampe monte des pieds de la première marche jusqu'au bord de la
+	# plate-forme (deux marches de profondeur), pas au-delà : sinon elle
+	# laissait une petite marche au bord de la plate-forme.
+	var run := step_d * 2.0
 	var rise := step_h * 3.0
 	var ramp := BoxShape3D.new()
 	ramp.size = Vector3(NAVE_X * 2.0, 0.1, sqrt(run * run + rise * rise))
@@ -384,7 +387,8 @@ func _build_rubble() -> void:
 			var p := center + Vector3(_rng.randf_range(-1, 1), 0, _rng.randf_range(-1, 1)) * radius
 			var s := Vector3(_rng.randf_range(0.3, 0.9), _rng.randf_range(0.22, 0.42), _rng.randf_range(0.3, 0.6))
 			var rot := Basis.from_euler(Vector3(_rng.randf_range(-0.3, 0.3), _rng.randf() * TAU, _rng.randf_range(-0.3, 0.3)))
-			_box(p + Vector3.UP * s.y * 0.35, s, rot, s.x > 0.6, _stone_tint(0.0))
+			# Collision pour toutes les pierres, sauf les plus petites (on les enjambe).
+			_box(p + Vector3.UP * s.y * 0.35, s, rot, s.x > 0.35, _stone_tint(0.0))
 
 
 ## Cimetière à l'est : stèles et croix penchées.

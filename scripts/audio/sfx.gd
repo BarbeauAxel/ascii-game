@@ -43,6 +43,7 @@ func _ready() -> void:
 	_streams["victory"] = _wav(_victory())
 	_streams["rumble"] = _wav(_rumble())
 	_streams["ignite"] = _wav(_ignite())
+	_streams["splash"] = _wav(_splash())
 	_ambience = _loop_player(_night_loop(), -16.0)
 	_rain = _loop_player(_rain_loop(), -80.0)
 	print("Sons synthétisés en %d ms" % (Time.get_ticks_msec() - t0))
@@ -207,6 +208,20 @@ func _ignite() -> PackedFloat32Array:
 		lp += lerpf(0.04, 0.3, smoothstep(0.0, 0.25, t)) * (_noise() - lp)
 		d[i] = lp * smoothstep(0.0, 0.08, t) * exp(-maxf(t - 0.15, 0.0) * 5.0) * 1.3
 	_add_clicks(d, 14, 0.1, 0.85, 0.35)
+	return d
+
+
+## Pas dans l'eau : clapotis (bruit filtré qui retombe) et gouttelettes.
+func _splash() -> PackedFloat32Array:
+	var d := _buf(0.35)
+	var lp := 0.0
+	var lp2 := 0.0
+	for i in d.size():
+		var t := float(i) / RATE
+		lp += 0.25 * (_noise() - lp)
+		lp2 += 0.05 * (lp - lp2)
+		d[i] = (lp - lp2) * exp(-t * 14.0) * 1.6 + sin(TAU * (260.0 - 300.0 * t) * t) * exp(-t * 30.0) * 0.3
+	_add_clicks(d, 8, 0.03, 0.3, 0.25)
 	return d
 
 

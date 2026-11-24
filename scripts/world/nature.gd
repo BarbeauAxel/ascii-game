@@ -204,29 +204,57 @@ func _pond_distance(p: Vector2) -> float:
 	return d.length() - pond_radius(d.angle())
 
 
+## Profondeur relative de la mare au point `p` (plan XZ) : 0 hors de l'eau,
+## puis jusqu'à 1 à 1,6 m du bord. Sert au héros et aux squelettes, qui s'y
+## enfoncent et ralentissent.
+static func pond_wade(p: Vector2) -> float:
+	var d := p - POND_CENTER
+	var inside := pond_radius(d.angle()) - d.length()
+	return clampf(inside / 1.6, 0.0, 1.0)
+
+
+## Plages sans rochers (angles, en radians) : on peut y entrer dans la mare.
+const POND_BEACHES := [0.15, 1.75]
+const POND_BEACH_HALF_WIDTH := 0.4
+
+
+func _on_beach(angle: float) -> bool:
+	for b: float in POND_BEACHES:
+		if absf(wrapf(angle - b, -PI, PI)) < POND_BEACH_HALF_WIDTH:
+			return true
+	return false
+
+
 func _build_pond() -> void:
-	# Disque polaire assez fin pour que les vagues déforment les sommets.
+	# Disque polaire assez fin pour que les vagues déforment les sommets. La
+	# couleur des sommets (rouge) vaut 0 au centre et 1 sur la rive : le
+	# shader en tire la profondeur (eau claire et vaseuse au bord, sombre au
+	# centre) et la ligne d'écume.
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	var segments := 64
-	var rings := 10
+	var segments := 72
+	var rings := 12
 	var water_y := 0.03
 	var pts: Array[Vector3] = []
+	var edge: Array[float] = []
 	pts.append(Vector3(POND_CENTER.x, water_y, POND_CENTER.y))
+	edge.append(0.0)
 	for ring in range(1, rings + 1):
 		for k in segments:
 			var a := TAU * k / segments
-			var r := pond_radius(a) * float(ring) / rings
+			var f := float(ring) / rings
+			var r := pond_radius(a) * f
 			pts.append(Vector3(POND_CENTER.x + cos(a) * r, water_y, POND_CENTER.y + sin(a) * r))
+			edge.append(f)
 	st.set_normal(Vector3.UP)
 	for k in segments:
 		var k1 := (k + 1) % segments
-		_water_tri(st, pts[0], pts[1 + k1], pts[1 + k])
+		_water_tri(st, pts, edge, 0, 1 + k1, 1 + k)
 		for ring in range(1, rings):
 			var i0 := 1 + (ring - 1) * segments
 			var i1 := 1 + ring * segments
-			_water_tri(st, pts[i0 + k], pts[i0 + k1], pts[i1 + k])
-			_water_tri(st, pts[i0 + k1], pts[i1 + k1], pts[i1 + k])
+			_water_tri(st, pts, edge, i0 + k, i0 + k1, i1 + k)
+			_water_tri(st, pts, edge, i0 + k1, i1 + k1, i1 + k)
 	var mat := ShaderMaterial.new()
 	mat.shader = WATER_SHADER
 	var water := MeshInstance3D.new()
@@ -235,9 +263,11 @@ func _build_pond() -> void:
 	water.material_override = mat
 	water.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	water.add_to_group("rain_receivers")
+	water.add_to_group("water")
 	add_child(water)
 
-	# Berge : pierres plates et galets le long du bord.
+	# Berge : pierres plates et galets le long du bord, sauf sur deux plages.
+	# Chaque rocher a une collision : on ne les traverse plus.
 	var rock_mat := StandardMaterial3D.new()
 	rock_mat.albedo_color = Color(0.36, 0.36, 0.34)
 	rock_mat.albedo_texture = STONE.get_material().albedo_texture
@@ -247,28 +277,91 @@ func _build_pond() -> void:
 	rock_mat.roughness = 0.9
 	var rocks := SurfaceTool.new()
 	rocks.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var body := StaticBody3D.new()
+	body.name = "PondRockCollision"
+	add_child(body)
 	var a := 0.0
 	while a < TAU:
-		var size := _rng.randf_range(0.18, 0.45)
-		var r := pond_radius(a) + _rng.randf_range(-0.1, 0.25)
+		var size := _rng.randf_range(0.2, 0.48)
+		var step := _rng.randf_range(0.14, 0.42)
+		if _on_beach(a):
+			a += step
+			continue
+		var r := pond_radius(a) + _rng.randf_range(-0.05, 0.3)
 		var pos := Vector3(POND_CENTER.x + cos(a) * r, size * 0.15, POND_CENTER.y + sin(a) * r)
 		var sphere := SphereMesh.new()
 		sphere.radius = size
 		sphere.height = size * 2.0
 		sphere.radial_segments = 7
 		sphere.rings = 4
-		var basis_rock := Basis.from_euler(Vector3(_rng.randf_range(-0.3, 0.3), _rng.randf() * TAU, _rng.randf_range(-0.3, 0.3)))
+		var yaw := _rng.randf() * TAU
+		var basis_rock := Basis.from_euler(Vector3(_rng.randf_range(-0.3, 0.3), yaw, _rng.randf_range(-0.3, 0.3)))
 		rocks.append_from(sphere, 0, Transform3D(basis_rock * Basis.from_scale(Vector3(1.3, 0.45, 1.0)), pos))
-		a += _rng.randf_range(0.12, 0.45)
+		var col := CollisionShape3D.new()
+		var shape := CylinderShape3D.new()
+		shape.radius = size * 1.1
+		shape.height = maxf(size * 0.9, 0.3)
+		col.shape = shape
+		col.position = Vector3(pos.x, shape.height * 0.5, pos.z)
+		body.add_child(col)
+		a += step
 	var shore := MeshInstance3D.new()
 	shore.name = "PondRocks"
 	shore.mesh = rocks.commit()
 	shore.material_override = rock_mat
 	add_child(shore)
 
+	# Nénuphars : feuilles rondes posées sur l'eau, surtout près des bords.
+	var pad_mat := StandardMaterial3D.new()
+	pad_mat.albedo_color = Color(0.3, 0.46, 0.2)
+	pad_mat.emission_enabled = true
+	pad_mat.emission = Color(0.12, 0.2, 0.08)
+	pad_mat.roughness = 1.0
+	var flower_mat := StandardMaterial3D.new()
+	flower_mat.albedo_color = Color(0.85, 0.8, 0.9)
+	flower_mat.emission_enabled = true
+	flower_mat.emission = Color(0.6, 0.55, 0.7)
+	flower_mat.emission_energy_multiplier = 0.3
+	flower_mat.roughness = 1.0
+	var pads := SurfaceTool.new()
+	pads.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var flowers := SurfaceTool.new()
+	flowers.begin(Mesh.PRIMITIVE_TRIANGLES)
+	for n in 11:
+		var ang := _rng.randf() * TAU
+		var f := _rng.randf_range(0.45, 0.85)
+		var c := POND_CENTER + Vector2(cos(ang), sin(ang)) * pond_radius(ang) * f
+		var radius := _rng.randf_range(0.18, 0.32)
+		var disc := CylinderMesh.new()
+		disc.top_radius = radius
+		disc.bottom_radius = radius
+		disc.height = 0.02
+		disc.radial_segments = 12
+		disc.rings = 1
+		pads.append_from(disc, 0, Transform3D(Basis(Vector3.UP, _rng.randf() * TAU), Vector3(c.x, 0.075, c.y)))
+		if _rng.randf() < 0.35:
+			var bud := SphereMesh.new()
+			bud.radius = 0.06
+			bud.height = 0.09
+			bud.radial_segments = 6
+			bud.rings = 3
+			flowers.append_from(bud, 0, Transform3D(Basis(), Vector3(c.x + 0.05, 0.12, c.y)))
+	var pad_node := MeshInstance3D.new()
+	pad_node.name = "LilyPads"
+	pad_node.mesh = pads.commit()
+	pad_node.material_override = pad_mat
+	add_child(pad_node)
+	var flower_node := MeshInstance3D.new()
+	flower_node.name = "LilyFlowers"
+	flower_node.mesh = flowers.commit()
+	flower_node.material_override = flower_mat
+	add_child(flower_node)
 
-func _water_tri(st: SurfaceTool, a: Vector3, b: Vector3, c: Vector3) -> void:
-	for v in [a, b, c]:
+
+func _water_tri(st: SurfaceTool, pts: Array[Vector3], edge: Array[float], i0: int, i1: int, i2: int) -> void:
+	for i in [i0, i1, i2]:
+		var v: Vector3 = pts[i]
+		st.set_color(Color(edge[i], 0.0, 0.0))
 		st.set_uv(Vector2(v.x, v.z))
 		st.add_vertex(v)
 

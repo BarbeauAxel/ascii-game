@@ -236,6 +236,7 @@ sinusoïdes et d'enveloppes. Ils sont stockés en AudioStreamWAV 16 bits mono à
 | `soul` | âme qui s'échappe | voix aérienne qui monte, légèrement vibrée |
 | `rumble` | éveil du Gardien | grondement grave modulé + cliquetis |
 | `ignite` | torche qui s'embrase | souffle dont le filtre s'ouvre + crépitements |
+| `splash` | pas dans la mare | clapotis filtré + gouttelettes |
 | `victory` | Gardien vaincu | cloche puis accord majeur |
 | ambiance | en boucle | vent par rafales + grillons |
 | pluie | en boucle, suit F3 | bruissement + impacts de gouttes |
@@ -282,6 +283,17 @@ modifient pas.
   - **Parade** (clic droit ou K, maintenu) : le bouclier passe devant le buste.
     Un coup reçu de face n'inflige que 15 % des dégâts, et l'on avance au
     ralenti sans se retourner.
+  - **Marches** : un obstacle de moins de 45 cm (`max_step_height`) se
+    franchit en marchant, sans sauter : rochers de la berge, éboulis, socles
+    des piliers, marches de l'autel. Quand le héros bute en avançant, on
+    vérifie qu'il peut être soulevé de 45 cm, avancer, puis redescendre sur
+    un dessus assez plat ; si oui, il y est posé. Une animation de montée
+    accompagne le mouvement : la jambe menante se lève genou plié et se pose,
+    l'autre pousse, le buste se penche et les bras font balancier ; les
+    jambes alternent d'une marche à l'autre. Le corps s'élève vite puis
+    ralentit en arrivant, en 0,2 à 0,4 s selon la hauteur, et les montées
+    successives (escalier) s'enchaînent sans à-coup. Plus haut (tombes, murs, tambours de
+    colonne couchés), il faut sauter.
   - **Esquive** (Ctrl, L ou bouton du milieu) : roulade de 0,5 s dans la
     direction des touches, ou en arrière sans direction, en gardant la face
     tournée vers l'ennemi. Pendant les trois premiers quarts de la roulade,
@@ -353,21 +365,39 @@ scène.
   brisés, un effondré). S'y ajoutent un dallage disjoint, l'emmarchement, un
   autel à cierges, des éboulis, un cimetière (stèles, croix penchées) et un
   chemin dallé. Les murs côté caméra (est, sud) sont effondrés pour ne jamais
-  cacher le joueur. Des milliers de pierres tiennent dans 2 MultiMesh,
+  cacher le joueur. Les éboulis ont une collision, sauf les plus petits qu'on
+  enjambe. Des milliers de pierres tiennent dans 2 MultiMesh,
   donc 2 appels de rendu. Collisions uniquement sous 2,6 m.
 - **Nature** (`nature.gd`) : sol texturé ; herbe en touffes, environ 70 000
   brins dans une MultiMesh, plus dense par plaques, rare dans la nef et sur le
   chemin ; 9 arbres morts aux branches récursives tordues (un maillage fusionné
   par arbre) ; buissons.
-- **Vent** (`grass.gdshader`) : rafales qui traversent la prairie et
-  frémissement de chaque brin ; la base reste plantée.
-- **Mare** (`nature.gd` + `water.gdshader`) : eau opaque sombre, au contour
-  irrégulier, avec vagues et rides fines, berge de pierres et roseaux. La
-  lune n'est jamais dans le champ (vue plongeante) : son reflet est simulé
-  derrière la mare, un peu sous l'axe du reflet d'une eau plate. Seules les
-  facettes de vague bien inclinées la renvoient, d'où des paillettes qui
-  scintillent (`moon_elevation`, `glint_sharpness`). Pas de SSR : il ne
-  fonctionne pas en orthographique.
+- **Vent** (`grass.gdshader`) : rafales lentes qui traversent la prairie et
+  léger frémissement de chaque brin ; la base reste plantée. Le vent a été
+  adouci (`wind_strength` 0,14, `wind_speed` 0,55) : avec des cellules de 3 px,
+  un vent plus fort faisait trop bouger l'image.
+- **Mare** (`nature.gd` + `water.gdshader`) : eau opaque au contour
+  irrégulier, avec vagues et rides fines.
+  - **Profondeur** : la couleur des sommets va de 0 au centre à 1 sur la
+    rive. Le centre est sombre, le bord clair et vaseux, avec une ligne
+    d'écume le long de la rive.
+  - **Vie** : quelques ronds d'insectes apparaissent de temps en temps, même
+    sans pluie (`ambient_ripples`), et des nénuphars, certains en fleur,
+    flottent près des bords.
+  - **Reflet de la lune** : la lune n'est jamais dans le champ (vue
+    plongeante), donc son reflet est simulé derrière la mare, un peu sous
+    l'axe du reflet d'une eau plate. Seules les facettes de vague bien
+    inclinées la renvoient, d'où des paillettes qui scintillent
+    (`moon_elevation`, `glint_sharpness`). Pas de SSR : il ne fonctionne pas
+    en orthographique.
+  - **Berge** : rochers avec collision, qu'on enjambe comme des marches, et
+    deux plages sans rochers (à l'est, côté chapelle, et au sud). Roseaux.
+  - **Marcher dans l'eau** : le héros et les squelettes s'enfoncent
+    progressivement, jusqu'à 0,55 m à 1,6 m du bord (`pond_wade()`). Le décor
+    ne pouvant pas être creusé, le visuel est abaissé et l'eau opaque cache
+    le bas du corps. Ils avancent jusqu'à deux fois plus lentement. Les pas
+    deviennent des éclaboussures (son `splash` + gouttelettes) et l'eau forme
+    des cercles autour du héros (`wake_position`, `wake_strength`).
 - **Pluie** (F3, `rain.gd`) : environ 3 500 gouttes (GPUParticles3D), traits
   verticaux courts et discrets, inclinés par le vent, et 2 000 éclaboussures au sol. La zone suit
   le joueur. Sous l'averse, des ronds de gouttes apparaissent sur la mare et

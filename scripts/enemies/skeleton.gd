@@ -95,6 +95,7 @@ const MOVES := [
 
 ## Calque « cellules fines » partagé avec le soldat (soldier.gd, FINE_LAYER).
 const FINE_LAYER := 3
+const NATURE := preload("res://scripts/world/nature.gd")
 
 var state := State.WANDER
 var health := 0.0
@@ -117,6 +118,7 @@ var _los_timer := 0.0
 var _last_seen := Vector3.ZERO
 var _lost_time := 0.0
 var _rattle_timer := 0.0
+var _wade := 0.0   # profondeur dans la mare (voir player.gd)
 var _attack_kind := 0       # index dans MOVES
 var _last_kind := -1
 var _lunged := false
@@ -346,6 +348,10 @@ func _physics_process(delta: float) -> void:
 		_avoid_time -= delta
 		desired = desired.rotated(Vector3.UP, _avoid_sign * PI * 0.5)
 
+	# Mare : il s'enfonce (visuel abaissé) et ralentit.
+	_wade = move_toward(_wade, NATURE.pond_wade(Vector2(global_position.x, global_position.z)), delta * 2.5)
+	_visual.position.y = -0.55 * _wade
+	desired *= lerpf(1.0, 0.5, _wade)
 	var horizontal := Vector3(velocity.x, 0, velocity.z)
 	horizontal = horizontal.lerp(desired, 1.0 - exp(-10.0 * delta)) + _knockback
 	_knockback = _knockback.lerp(Vector3.ZERO, 1.0 - exp(-8.0 * delta))

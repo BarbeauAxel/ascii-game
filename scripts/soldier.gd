@@ -179,6 +179,10 @@ var _react_strength := 1.0
 var _roll_t := -1.0
 var _roll_duration := 0.5
 var _roll_backward := false
+# Montée de marche : progression 0..1 (-1 = aucune), jambe qui monte en premier.
+var _stepup_t := -1.0
+var _stepup_duration := 0.3
+var _stepup_leg := 1
 var _cape_angle := 0.0
 var _cape_velocity := 0.0
 
@@ -476,6 +480,15 @@ func hit_react(from: Vector3, strength := 1.0) -> void:
 
 ## Roulade (esquive) : avant, dans la direction où regarde le soldat, ou
 ## arrière (`backward`) en gardant la face tournée vers l'ennemi.
+## Montée d'une marche (rocher, débris, marche) : une jambe se lève et se
+## pose sur l'obstacle, l'autre pousse ; les jambes alternent d'une marche à
+## l'autre (escalier).
+func play_step(duration: float) -> void:
+	_stepup_duration = duration
+	_stepup_t = 0.0
+	_stepup_leg = 1 - _stepup_leg
+
+
 func play_roll(duration: float, backward := false) -> void:
 	_roll_duration = duration
 	_roll_backward = backward
@@ -559,6 +572,31 @@ func _animate_combat(delta: float) -> void:
 	_flash = move_toward(_flash, 0.0, delta * 5.0)
 	for m in _all_materials:
 		m.emission_energy_multiplier = _flash * 1.2
+
+	# Montée de marche : jambe menante levée genou plié puis posée, jambe
+	# d'appui qui pousse vers l'arrière, buste penché en avant, bras qui
+	# accompagnent. La montée du corps elle-même est gérée par player.gd.
+	if _stepup_t >= 0.0:
+		_stepup_t += delta / _stepup_duration
+		var t := minf(_stepup_t, 1.0)
+		var lift := sin(PI * minf(t * 1.25, 1.0))      # jambe menante : monte puis se pose
+		var push := sin(PI * t)                          # poussée de la jambe d'appui
+		var lead := _stepup_leg
+		var trail := 1 - lead
+		_thigh[lead].rotation.x = lerpf(_thigh[lead].rotation.x, 1.05, lift)
+		_knee[lead].rotation.x = lerpf(_knee[lead].rotation.x, -1.35, lift)
+		_ankle[lead].rotation.x = -(_thigh[lead].rotation.x + _knee[lead].rotation.x) * 0.85
+		_thigh[trail].rotation.x = lerpf(_thigh[trail].rotation.x, -0.35, push)
+		_knee[trail].rotation.x = lerpf(_knee[trail].rotation.x, -0.25, push)
+		_ankle[trail].rotation.x = lerpf(_ankle[trail].rotation.x, 0.45, push)
+		# Buste penché en avant (rotation x négative), bras en balancier.
+		_spine.rotation.x -= 0.2 * push
+		_head.rotation.x += 0.1 * push
+		var arm_side := 1 if lead == 0 else 0  # bras opposé à la jambe menante
+		_shoulder[arm_side].rotation.x += 0.45 * push * (1.0 - _block)
+		_shoulder[1 - arm_side].rotation.x -= 0.25 * push
+		if _stepup_t >= 1.0:
+			_stepup_t = -1.0
 
 	# Réaction au coup : buste rejeté à l'opposé de l'attaquant (de face : en
 	# arrière ; de côté : plié de l'autre côté), tête qui suit, bras écartés.

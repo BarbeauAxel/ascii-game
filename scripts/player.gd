@@ -16,6 +16,9 @@ extends CharacterBody3D
 ##     de la roulade, puis courte récupération ;
 ##   - à 0 PV : le soldat tombe, puis se relève au point de départ.
 ##
+## Marches : un obstacle de moins de `max_step_height` (rocher, débris,
+## marche) se franchit en marchant, sans sauter (voir _try_step_up).
+##
 ## Retours d'impact : éclats d'os ou étincelles, micro-pause du jeu (« hit
 ## stop ») et secousse de caméra par cellules entières.
 ##
@@ -27,6 +30,10 @@ signal health_changed(health: float, max_health: float)
 
 const SOLDIER := preload("res://scripts/soldier.gd")
 const HIT_FX := preload("res://scripts/fx/hit_fx.gd")
+const NATURE := preload("res://scripts/world/nature.gd")
+## Enfoncement maximal dans la mare (m) et vitesse au plus profond (facteur).
+const WADE_DEPTH := 0.55
+const WADE_SPEED := 0.45
 
 ## Vitesse de marche et de course (Maj maintenue), en m/s.
 @export var walk_speed := 3.2
@@ -34,6 +41,8 @@ const HIT_FX := preload("res://scripts/fx/hit_fx.gd")
 @export var acceleration := 14.0
 @export var jump_velocity := 4.5
 @export var turn_speed := 10.0
+## Hauteur maximale franchie en marchant (rochers, débris, marches), en m.
+@export var max_step_height := 0.45
 
 @export_group("Combat")
 @export var max_health := 100.0
@@ -72,6 +81,12 @@ var _lunge := Vector3.ZERO
 var _roll_timer := -1.0        # temps écoulé dans la roulade, -1 = aucune
 var _roll_cooldown_left := 0.0
 var _roll_dir := Vector3.ZERO
+var _wade := 0.0               # profondeur dans la mare (0 = au sec, 1 = au plus profond)
+# Montée de marche : le corps est déjà en haut, le visuel part d'en bas
+# (`_step_rise` m plus bas) et le rejoint pendant l'animation.
+var _step_rise := 0.0
+var _step_time := 0.0
+var _step_duration := 0.3
 var _attack_hit_done := true
 var _blocking := false
 var _dead_timer := -1.0
@@ -92,8 +107,7 @@ func _ready() -> void:
 	if _soldier:
 		_soldier.walk_speed_ref = walk_speed
 		_soldier.run_speed_ref = run_speed
-		_soldier.footstep.connect(func(run: float) -> void:
-			Sfx.play("step", global_position, lerpf(-10.0, -4.0, run), 0.15))
+		_soldier.footstep.connect(_on_footstep)
 	health_changed.emit.call_deferred(health, max_health)
 
 
@@ -168,6 +182,7 @@ func _physics_process(delta: float) -> void:
 		velocity.y = jump_velocity
 
 	_update_combat(delta)
+	_update_wading(delta)
 	if _update_roll(delta):
 		return
 
@@ -178,6 +193,8 @@ func _physics_process(delta: float) -> void:
 	var direction := _camera_relative(input)
 
 	var speed := run_speed if Input.is_action_pressed("run") else walk_speed
+	# Dans la mare : on s'enfonce et on avance plus lentement.
+	speed *= lerpf(1.0, WADE_SPEED, _wade)
 	if _blocking:
 		speed = walk_speed * block_speed_factor
 	elif _attack_timer >= 0.0:
@@ -192,6 +209,9 @@ func _physics_process(delta: float) -> void:
 	velocity.z = lerpf(velocity.z, target.z, blend)
 
 	move_and_slide()
+	# Bloqué par un obstacle bas en avançant : on tente de le franchir.
+	if is_on_wall() and direction.length_squared() > 0.01:
+		_try_step_up(direction, delta)
 
 	# Oriente la silhouette (son avant est -Z) vers la direction de marche.
 	# Pendant la parade, on garde le bouclier tourné vers l'ennemi (pas de
@@ -269,6 +289,81 @@ func _update_roll(delta: float) -> bool:
 		_roll_cooldown_left = roll_cooldown
 		Sfx.play("step", global_position, -4.0)
 	return true
+
+
+## Franchit une marche : on soulève le corps de max_step_height, on avance,
+## puis on le redescend jusqu'au sol. Si le chemin est libre et que le point
+## d'arrivée est un sol assez plat et pas plus haut que max_step_height, le
+## corps y est placé. Le visuel est abaissé d'autant puis remonte en douceur,
+## pour que la montée ne fasse pas sauter l'image.
+func _try_step_up(direction: Vector3, delta: float) -> bool:
+	var start := global_transform
+	var up := Vector3.UP * max_step_height
+	var forward := direction.normalized() * maxf(walk_speed * delta, 0.12)
+	# Place au-dessus ?
+	if test_move(start, up):
+		return false
+	var raised := start.translated(up)
+	# Toujours bloqué une fois soulevé : obstacle trop haut.
+	if test_move(raised, forward):
+		return false
+	var advanced := raised.translated(forward)
+	var hit := KinematicCollision3D.new()
+	if not test_move(advanced, -up, hit):
+		return false # rien dessous : ce n'est pas une marche
+	if hit.get_normal().y < 0.7:
+		return false # pente trop raide
+	var landed := advanced.translated(hit.get_travel())
+	var rise := landed.origin.y - start.origin.y
+	if rise <= 0.02 or rise > max_step_height:
+		return false
+	global_transform = landed
+	velocity.y = 0.0
+	# Le visuel part d'où il en était (escalier : montées enchaînées).
+	_step_rise = _step_remaining() + rise
+	_step_duration = clampf(0.18 + rise * 0.5, 0.2, 0.42)
+	_step_time = 0.0
+	if _soldier:
+		_soldier.play_step(_step_duration)
+	return true
+
+
+## Hauteur dont le visuel est encore en dessous du corps pendant une montée :
+## elle diminue vite au début (la jambe pousse) puis ralentit en arrivant.
+func _step_remaining() -> float:
+	if _step_rise <= 0.0:
+		return 0.0
+	var t := clampf(_step_time / _step_duration, 0.0, 1.0)
+	if t >= 1.0:
+		_step_rise = 0.0
+		return 0.0
+	return _step_rise * (1.0 - ease(t, 0.45))
+
+
+## Pas : bruit d'herbe au sec, éclaboussure (son + gouttes) dans la mare.
+func _on_footstep(run: float) -> void:
+	if _wade > 0.05:
+		Sfx.play("splash", global_position, lerpf(-8.0, -2.0, _wade), 0.15)
+		HIT_FX.burst(self, global_position + Vector3.UP * (0.05 + 0.1 * _wade), Color(0.6, 0.68, 0.78), 8, 1.6, 0.03, 0.45)
+	else:
+		Sfx.play("step", global_position, lerpf(-10.0, -4.0, run), 0.15)
+
+
+## Mare : enfoncement progressif (le décor ne peut pas être creusé, on
+## abaisse donc le visuel ; l'eau opaque cache le bas du corps) et sillage.
+func _update_wading(delta: float) -> void:
+	var target := NATURE.pond_wade(Vector2(global_position.x, global_position.z))
+	_wade = move_toward(_wade, target, delta * 2.5)
+	# Après une montée de marche, le visuel rattrape le corps en douceur.
+	_step_time += delta
+	visual.position.y = -WADE_DEPTH * _wade - _step_remaining()
+	var moving := clampf(Vector2(velocity.x, velocity.z).length() / walk_speed, 0.0, 1.0)
+	for water in get_tree().get_nodes_in_group("water"):
+		var mesh := water as GeometryInstance3D
+		if mesh and mesh.material_override is ShaderMaterial:
+			var mat := mesh.material_override as ShaderMaterial
+			mat.set_shader_parameter("wake_position", Vector2(global_position.x, global_position.z))
+			mat.set_shader_parameter("wake_strength", (0.25 + 0.75 * moving) * minf(_wade * 3.0, 1.0))
 
 
 func _start_attack(kind: int) -> void:
